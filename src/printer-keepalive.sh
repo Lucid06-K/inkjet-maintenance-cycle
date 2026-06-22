@@ -228,9 +228,12 @@ for c, m, ye, k, label in inks:
     strip_bottom = y - BH
     y = strip_bottom - GAP
 
-# hairline rule separating the test strip from the space below
+# divider between the test strip and the space below: one rule split into four
+# equal quarters coloured C, M, Y, K (a little echo of the strip above)
 rule_y = strip_bottom - 16
-ops.append(line(ML, rule_y, RIGHT, rule_y, 0.6, 0, 0, 0, 0.25))
+qw = CW / 4.0
+for i, (c, m, ye, k) in enumerate([(1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0,1)]):
+    ops.append(line(ML + i*qw, rule_y, ML + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
 
 # note paper below (optional): lines / grid / dots, edge to edge, down to the
 # bottom of the page (the printer's own unprintable margin trims the extremes).
