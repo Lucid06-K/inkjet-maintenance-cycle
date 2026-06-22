@@ -13,7 +13,7 @@
 #
 #   light   thin colour bars across the top — routine, minimal ink
 #   medium  taller bars — a catch-up flush
-#   heavy   thick bars, printed twice — a deep flush
+#   heavy   tall solid bars (one dense page) — a deep flush
 #
 # Note: concentrating the strip at the top is great for routine clog PREVENTION;
 # the heavy tier uses taller bars (more vertical travel) for a thorough flush.
@@ -233,7 +233,7 @@ RIGHT = W - MR
 inks = [(1, 0, 0, 0, "C"), (0, 1, 0, 0, "M"), (0, 0, 1, 0, "Y"), (0, 0, 0, 1, "K")]
 
 # per-tier strip geometry: bar height + gap. Heavier = more ink (deeper flush).
-BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (24, 7)}[tier]
+BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (40, 8)}[tier]
 
 # the page content is encoded latin-1, so fold common smart punctuation to ASCII
 # (macOS computer names default to a curly apostrophe) and replace anything else
@@ -470,7 +470,7 @@ on=""; [ "$PCOUNT" -gt 1 ] && on=" on $PCOUNT printers"
 case "$TIER" in
     light)  body="Nozzle keep-alive printing now${on} - routine ($since).";;
     medium) body="Catching up${on} - ${since}; printing a medium nozzle flush.";;
-    heavy)  body="It's been a while${on} - ${since}; printing an intensive nozzle flush (2 pages each).";;
+    heavy)  body="It's been a while${on} - ${since}; printing an intensive nozzle flush.";;
 esac
 
 # --- dry run: build + open, no printing, no state change -------------------
@@ -494,7 +494,7 @@ fi
 notify "Printer Don't Die Please!!" "$body"
 LEAD=$(get_lead); [ "$LEAD" -gt 0 ] && sleep "$LEAD"
 
-COPIES=1; [ "$TIER" = heavy ] && COPIES=2
+COPIES=1   # always one page; heavy gets a denser single page, not a second sheet
 NOW=$(date +%s); OK=0; FAILED=""; ACUR=$ADRY    # ACUR<0 => art off
 
 # print to every selected printer; one history row per printer

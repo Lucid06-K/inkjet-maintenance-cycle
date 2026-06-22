@@ -70,7 +70,7 @@ print, so if the Mac was off/asleep across scheduled runs it catches up:
 |---|---|---|
 | ≤ 1.5× interval | **light** | thin colour bars across the top (routine) |
 | ≤ 3× interval | **medium** | taller bars |
-| > 3× interval | **heavy** | thick bars, printed ×2 (deep flush) |
+| > 3× interval | **heavy** | tall solid bars on one dense page (deep flush) |
 
 ## Heads-up notification
 

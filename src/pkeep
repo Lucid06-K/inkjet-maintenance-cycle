@@ -60,7 +60,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.10.1"
+VERSION="1.11.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -363,7 +363,7 @@ _draw_body() {
         row 0 "$(is_loaded && echo 'Disable scheduled keep-alive' || echo 'Enable scheduled keep-alive')"
         printf '  %s\n' "$SEP"
         row 1 "Print keep-alive now   ${DIM}(auto: $(auto_tier))${R}"
-        row 2 "Intensive flush now    ${DIM}(heavy, 2 pages)${R}"
+        row 2 "Intensive flush now    ${DIM}(heavy, one dense page)${R}"
         row 3 "Preview (dry run)"
         row 4 "History / log"
         row 5 "Settings ▸"
@@ -499,7 +499,7 @@ show_help() {
 
      light    1 thin line per channel    — routine, minimal ink
      medium   3-line comb per channel    — missed ~1-2 runs
-     heavy    solid band per channel x2  — long gap, a deep flush
+     heavy    tall solid bars, one page  — long gap, a deep flush
 
   Before each print it pops a heads-up notification so nobody's surprised by
   the printer waking. Every print is logged (see History / log).
