@@ -2,9 +2,15 @@
 
 Keeps an idle **inkjet** printer's nozzles from drying out / clogging by
 printing a tiny page on a schedule. A compact **test strip** of all ink
-channels (C / M / Y / K) runs across the top of the page, leaving the space
-below free — turn on **lined note paper** to fill it with ruled lines so the
-sheet doubles as notepaper.
+channels (C / M / Y / K) sits at the top, leaving the space below free — turn
+on **lined note paper** to fill it with ruled lines so the sheet doubles as
+notepaper.
+
+Two page **layouts** (Settings ▸ Page layout, or `pkeep layout new|classic`):
+the default **redesign** puts a half-width strip on the right (about half the
+ink) with the title/info on the left, each line underlined by a CMYK ribbon
+that tapers out of the strip; **classic** is the original full-width strip with
+the title above it.
 
 Periodic light printing is much cheaper than letting nozzles clog and then
 running the printer's own cleaning cycle (which purges a lot of ink). The
@@ -43,6 +49,7 @@ q quit). Or use subcommands:
 | `pkeep printer add\|rm NAME` | add / remove a printer from the cycle |
 | `pkeep interval [days]` | show / set the schedule interval |
 | `pkeep lead [secs]` | show / set the heads-up lead time |
+| `pkeep layout new\|classic` | page design: redesign (default) or original full-width |
 | `pkeep update` | fetch + verify + install the latest version |
 | `pkeep autoupdate on\|off` | opt-in daily auto-update |
 

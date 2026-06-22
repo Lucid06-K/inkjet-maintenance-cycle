@@ -24,6 +24,7 @@
 #   pkeep margin on|off     workbook-style left margin line
 #   pkeep marginmm MM       margin line distance from the left edge (10-80)
 #   pkeep art off|rotate|N  corner ASCII art: off, rotate all 15, or pin #N
+#   pkeep layout new|classic page design: redesign (default) or original full-width
 #   pkeep artsheet          print a gallery of all 15 art pieces
 #   pkeep update            fetch + verify + install the latest version
 #   pkeep autoupdate on|off opt-in daily auto-update
@@ -48,6 +49,7 @@ NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle"
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"
 MARGIN_FLAG="$SCRIPTS/printer_keepalive.margin"
 MARGINMM_FILE="$SCRIPTS/printer_keepalive.marginmm"
+LAYOUT_FILE="$SCRIPTS/printer_keepalive.layout"
 ARTFLAG="$SCRIPTS/printer_keepalive.art"
 LASTPRINT_FILE="$SCRIPTS/printer_keepalive.lastprint"
 HISTORY_FILE="$SCRIPTS/printer_keepalive.history"
@@ -61,7 +63,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.15.0"
+VERSION="1.16.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -115,6 +117,9 @@ set_artmode() {
     esac
 }
 art_on()     { [ "$(art_mode)" != off ]; }
+# page layout: classic (original full-width strip) | new (redesign, default)
+get_layout()  { local v=""; [ -r "$LAYOUT_FILE" ] && v=$(trim < "$LAYOUT_FILE"); case "$v" in classic) echo classic;; *) echo new;; esac; }
+set_layout()  { case "$1" in classic) printf 'classic\n' > "$LAYOUT_FILE";; new|redesign) rm -f "$LAYOUT_FILE";; *) return 1;; esac; }
 art_summary() { local m; m=$(art_mode); case "$m" in off) echo off;; rotate) echo "rotate (all 15)";; *) echo "#$m ${ART_NAMES[$((m-1))]}";; esac; }
 set_notestyle()   { case "$1" in off|lines|grid|dots) printf '%s\n' "$1" > "$NOTESTYLE_FILE"; rm -f "$LINES_FLAG";; *) return 1;; esac; }
 cycle_notestyle() { case "$(get_notestyle)" in off) set_notestyle lines;; lines) set_notestyle grid;; grid) set_notestyle dots;; *) set_notestyle off;; esac; }
@@ -217,6 +222,7 @@ status_text() {
     echo "Heads-up lead: $(get_lead)s"
     echo "Note paper:    $(notepaper_summary)"
     echo "ASCII art:     $(art_summary)"
+    echo "Page layout:   $(get_layout)"
     autoupdate_on && echo "Auto-update:   on (daily, verified)" || echo "Auto-update:   off (manual: pkeep update)"
     echo "Version:       $VERSION"
 }
@@ -299,7 +305,7 @@ maybe_autoupdate() {
 # ===========================================================================
 SCREEN=main; focus=0; MSG=""
 MAIN_MAX=8      # selectable indices 0..8
-SET_MAX=7       # 0..7
+SET_MAX=8       # 0..8
 AVAIL=()        # available printers, populated when the chooser opens
 
 _paint() {
@@ -381,8 +387,9 @@ _draw_body() {
         row 4 "Note paper ▸       $(notepaper_summary)"
         row 5 "ASCII art ▸        $(art_summary)"
         row 6 "Auto-update        $(autoupdate_on && echo ON || echo OFF)"
+        row 7 "Page layout        $(get_layout)"
         printf '  %s\n' "$SEP"
-        row 7 "← Back to menu"
+        row 8 "← Back to menu"
         printf '  %s\n' "$SEP"
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter select · esc back · q quit${R}"
@@ -492,23 +499,37 @@ preview_page() {
     blank=$(printf '%*s' "$W" '')
 
     printf '\033[2J\033[H'
-    printf '\n  %sPage preview%s  %s· %s flush · note: %s · art: %s%s\n\n' \
-        "$BLD" "$R" "$DIM" "$tier" "$(notepaper_summary)" "$(art_summary)" "$R"
-    # top band: HALF-width strip on the right, header text on the left
-    local LH=22 RH=$(( W - 22 ))
-    hrow() { printf '%s|%-*.*s%s%*s%s|%s\n' "$pad" "$LH" "$LH" " $1" "$2" "$RH" '' "$R" "$3"; }
+    local lay; lay=$(get_layout)
+    printf '\n  %sPage preview%s  %s· %s · %s flush · note: %s · art: %s%s\n\n' \
+        "$BLD" "$R" "$DIM" "$lay" "$tier" "$(notepaper_summary)" "$(art_summary)" "$R"
     printf '%s+%s+\n' "$pad" "$dash"
-    hrow "PRINTER DON'T DIE PLEASE!!" "$CB" "  C"
-    hrow "$tier flush"                "$MB" "  M"
-    hrow "github.com/Lucid06-K"       "$YB" "  Y"
-    hrow "$(art_on && echo "art: $(art_mode)" || echo '')" "$KB" "  K"
-    # ink gauge sits on the divider, under the RIGHT half only
-    if [ "$mode" = combined ]; then
-        printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' Colour %s%%  Black %s%%' "$c" "$k")" " INK LEVELS"
+    if [ "$lay" = classic ]; then
+        # classic: title on top, full-width CMYK strip
+        printf '%s|%-*s|\n' "$pad" "$W" " PRINTER DON'T DIE PLEASE!!"
+        printf '%s|%-*s|\n' "$pad" "$W" ""
+        bar() { printf '%s|%s%*s%s|%s\n' "$pad" "$1" "$W" '' "$R" "$2"; }
+        bar "$CB" "  C"; bar "$MB" "  M"; bar "$YB" "  Y"; bar "$KB" "  K"
+        if [ "$mode" = combined ]; then
+            printf '%s|%-*s|%s\n' "$pad" "$W" "$(printf ' Colour %s%%        Black %s%%' "$c" "$k")" " INK LEVELS"
+        else
+            printf '%s|%-*s|%s\n' "$pad" "$W" "$(printf ' C %s  M %s  Y %s  K %s' "$c" "$m" "$y" "$k")" " INK LEVELS"
+        fi
+        printf '%s|%s|\n' "$pad" "$(printf '%*s' "$W" '' | tr ' ' '=')"
     else
-        printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' C%s M%s Y%s K%s' "$c" "$m" "$y" "$k")" " INK LEVELS"
+        # redesign: HALF-width strip on the right, header text on the left
+        local LH=22 RH=$(( W - 22 ))
+        hrow() { printf '%s|%-*.*s%s%*s%s|%s\n' "$pad" "$LH" "$LH" " $1" "$2" "$RH" '' "$R" "$3"; }
+        hrow "PRINTER DON'T DIE PLEASE!!" "$CB" "  C"
+        hrow "$tier flush"                "$MB" "  M"
+        hrow "github.com/Lucid06-K"       "$YB" "  Y"
+        hrow "$(art_on && echo "art: $(art_mode)" || echo '')" "$KB" "  K"
+        if [ "$mode" = combined ]; then
+            printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' Colour %s%%  Black %s%%' "$c" "$k")" " INK LEVELS"
+        else
+            printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' C%s M%s Y%s K%s' "$c" "$m" "$y" "$k")" " INK LEVELS"
+        fi
+        printf '%s|%*s%s|\n' "$pad" "$LH" '' "$(printf '%*s' "$RH" '' | tr ' ' '=')"
     fi
-    printf '%s|%*s%s|\n' "$pad" "$LH" '' "$(printf '%*s' "$RH" '' | tr ' ' '=')"   # divider under right half
     printf '%s|%-*s|\n' "$pad" "$W" " Notes                            Date __"
     # note-paper area (8 rows), reflecting style + margin. Builder makes a plain
     # W-wide row so the box borders always line up.
@@ -596,7 +617,8 @@ ui() {
                         4) SCREEN=notepaper; focus=0; MSG="";;
                         5) SCREEN=art; focus=0; MSG="";;
                         6) if autoupdate_on; then rm -f "$AUTOUPDATE_FLAG"; MSG="Auto-update OFF"; else touch "$AUTOUPDATE_FLAG"; MSG="Auto-update ON (checks daily)"; fi;;
-                        7) SCREEN=main; focus=0; MSG="";;
+                        7) if [ "$(get_layout)" = classic ]; then set_layout new; MSG="Layout: redesign"; else set_layout classic; MSG="Layout: classic"; fi;;
+                        8) SCREEN=main; focus=0; MSG="";;
                     esac
                 else
                     case "$focus" in
@@ -652,6 +674,11 @@ show_help() {
   one per print), or pin a specific piece. CLI: 'pkeep art off|rotate|<1-15>';
   'pkeep artsheet' prints a gallery of all 15.
 
+  Page layout (Settings ▸ Page layout): 'redesign' (default) is a half-width
+  strip on the right with the title/info on the left and a tapering CMYK ribbon
+  under each line; 'classic' is the original full-width strip with the title
+  above it. CLI: 'pkeep layout new|classic'.
+
   Updates: "Check for updates" installs the latest verified version (signed +
   checksummed). Turn on Settings ▸ Auto-update for a daily check. CLI:
   'pkeep update', 'pkeep autoupdate on|off'.
@@ -669,6 +696,7 @@ case "${1:-}" in
     status)    status_text;;
     update)    run_update;;
     autoupdate) case "${2:-}" in on) touch "$AUTOUPDATE_FLAG"; echo "Auto-update ON";; off) rm -f "$AUTOUPDATE_FLAG"; echo "Auto-update OFF";; *) autoupdate_on && echo on || echo off;; esac;;
+    layout)    case "${2:-}" in classic) set_layout classic; echo "Layout: classic";; new|redesign) set_layout new; echo "Layout: redesign";; "") get_layout;; *) echo "usage: pkeep layout new|classic";; esac;;
     on)        agent_on;  echo "Scheduled keep-alive enabled.";;
     off)       agent_off; echo "Scheduled keep-alive disabled.";;
     run)       "$WORKER" ${2:+--tier "$2"};;

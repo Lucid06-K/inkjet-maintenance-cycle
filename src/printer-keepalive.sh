@@ -40,6 +40,7 @@ NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle" # off | lines | grid | dot
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"  # rule spacing in mm
 MARGIN_FLAG="$SCRIPTS/printer_keepalive.margin"       # presence = workbook left margin line ON (default off)
 MARGINMM_FILE="$SCRIPTS/printer_keepalive.marginmm"   # margin distance from the left edge, mm
+LAYOUT_FILE="$SCRIPTS/printer_keepalive.layout"       # page layout: new (default) | classic
 ARTFLAG="$SCRIPTS/printer_keepalive.art"              # presence = rotating ASCII art ON (default off)
 ARTINDEX_FILE="$SCRIPTS/.printer_keepalive.artindex"  # which art to show next
 ART_COUNT=15                                          # must match the ART list in the generator
@@ -88,6 +89,10 @@ get_notespacing() {   # rule spacing in mm (default 8)
     case "$v" in ''|*[!0-9]*) echo 8 ;; *) echo "$v" ;; esac
 }
 lines_on()  { [ "$(get_notestyle)" != off ]; }
+get_layout() {   # page layout: classic (original full-width) | new (redesign, default)
+    local v=""; [ -r "$LAYOUT_FILE" ] && v=$(trim < "$LAYOUT_FILE")
+    case "$v" in classic) echo classic;; *) echo new;; esac
+}
 margin_on() { [ -e "$MARGIN_FLAG" ]; }    # school-workbook left margin line
 get_marginmm() {   # distance of the margin line from the left edge, mm (default 25)
     local v=""; [ -r "$MARGINMM_FILE" ] && v=$(trim < "$MARGINMM_FILE")
@@ -206,12 +211,13 @@ build_pdf() {
     local tier="$1" subtitle="$2" ink="${3:-}" art_idx="${4:--1}" mode="${5:-page}" pdf stub style sp_mm sp_pts
     stub="$(mktemp -t pkeepalive)"; pdf="${stub}.pdf"; mv "$stub" "$pdf"
     [ -z "$PYTHON" ] && { rm -f "$pdf"; echo "ERROR: python3 not found" >&2; return 1; }
-    local mg mg_pts
+    local mg mg_pts LAYOUT
+    LAYOUT=$(get_layout)
     style=$(get_notestyle); sp_mm=$(get_notespacing)
     sp_pts=$(awk "BEGIN{printf \"%.2f\", $sp_mm * 72 / 25.4}")   # mm -> points
     mg=$(margin_on && echo 1 || echo 0)
     mg_pts=$(awk "BEGIN{printf \"%.2f\", $(get_marginmm) * 72 / 25.4}")
-    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" "$art_idx" "$mode" "$mg" "$mg_pts" <<'PY'
+    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" "$art_idx" "$mode" "$mg" "$mg_pts" "$LAYOUT" <<'PY'
 import sys
 out  = sys.argv[1]
 tier = sys.argv[2] if len(sys.argv) > 2 else "light"
@@ -226,8 +232,10 @@ mode = sys.argv[8] if len(sys.argv) > 8 else "page"
 margin_on = (len(sys.argv) > 9 and sys.argv[9] == "1")
 try: margin_x = float(sys.argv[10])
 except (IndexError, ValueError): margin_x = 71.0
+layout = sys.argv[11] if len(sys.argv) > 11 else "new"
 if tier not in ("light", "medium", "heavy"): tier = "light"
 if style not in ("lines", "grid", "dots"): style = "off"
+if layout != "classic": layout = "new"
 if spacing < 8: spacing = 8        # sane floor so we never emit thousands of rules
 
 W, H = 595, 842                 # A4 points
@@ -239,9 +247,12 @@ RIGHT = W - MR
 inks = [(1, 0, 0, 0, "C"), (0, 1, 0, 0, "M"), (0, 0, 1, 0, "Y"), (0, 0, 0, 1, "K")]
 
 # per-tier strip geometry: bar height + gap. Heavier = more ink (deeper flush).
-# The strip is half-width (right side), so heavy uses much taller bars to keep
-# the deep-flush tier ink-heavy despite the narrower column.
-BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (44, 8)}[tier]
+# The redesign's strip is half-width, so heavy uses taller bars to stay ink-heavy
+# despite the narrower column; the classic full-width strip keeps the original 40.
+if layout == "classic":
+    BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (40, 8)}[tier]
+else:
+    BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (44, 8)}[tier]
 
 # the page content is encoded latin-1, so fold common smart punctuation to ASCII
 # (macOS computer names default to a curly apostrophe) and replace anything else
@@ -264,6 +275,19 @@ def line(x1, y1, x2, y2, w, c, m, ye, k):
 def mono(x, y, size, c, m, ye, k, s):    # monospace line in Courier (F3), CMYK fill
     return (f"BT /F3 {size} Tf {c} {m} {ye} {k} k "
             f"{x:.1f} {y:.1f} Td ({esc(s)}) Tj ET")
+def ribbon(xL, xT, xR, uy, bar_top, bar_bot, t, c, m, ye, k):
+    # a filled CMYK ribbon: full bar thickness at the strip's left edge (xR),
+    # curving + tapering to a thin underline of thickness t between xL and xT.
+    # Top and bottom edges are cubic Béziers with horizontal tangents (a smooth S).
+    half = (xR - xT) / 2.0
+    th = t / 2.0
+    return (f"{c} {m} {ye} {k} k "
+            f"{xL:.1f} {uy + th:.1f} m "
+            f"{xT:.1f} {uy + th:.1f} l "
+            f"{xT + half:.1f} {uy + th:.1f} {xR - half:.1f} {bar_top:.1f} {xR:.1f} {bar_top:.1f} c "
+            f"{xR:.1f} {bar_bot:.1f} l "
+            f"{xR - half:.1f} {bar_bot:.1f} {xT + half:.1f} {uy - th:.1f} {xT:.1f} {uy - th:.1f} c "
+            f"{xL:.1f} {uy - th:.1f} l f")
 
 # 15 tiny ASCII-art pieces shown top-right and rotated each print. Each LINE is
 # coloured C/M/Y/K in turn. Kept narrow so they tuck into the corner.
@@ -294,72 +318,98 @@ def art_block(lines, x_left, y_top, size, lead):
 ops = []
 ink_tok = ink.split() if ink else []
 ink_mode = ink_tok[0] if ink_tok else ""
+REPO = "github.com/Lucid06-K/printer-keepalive"
+note_split_x = None                # x where left/right note regions differ (heavy redesign)
+notes_left_top = None              # y where the extra left-fill note region starts
 
-# ===== top band: a HALF-WIDTH colour strip on the right, header on the left =====
-# The strip runs from the page middle to the right edge, so it uses ~half the ink
-# of a full-width strip yet still fires every nozzle (the head sweeps the same
-# columns regardless of width). Halving it frees the left half for the title/info,
-# which lets the note paper below start higher. Heavy keeps this layout but with
-# much taller bars so the deep-flush tier still pushes plenty of ink.
-strip_left = W / 2.0
-strip_w = RIGHT - strip_left
+# ===== top band: strip + ink-gauge divider (layout-dependent) =====
+if layout == "classic":
+    # original: a full-width strip with the title + info stacked above it
+    ops.append(text(ML, 802, 13, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.6))
+    sub = subtitle.strip()
+    sub = (sub + "  -  " if sub else "") + f"{tier} flush"
+    ops.append(text(ML, 788, 8, 0.45, sub))
+    if 0 <= art_idx < len(ART):
+        a = ART[art_idx]
+        aw = max(len(l) for l in a) * 6.5 * 0.6
+        art_block(a, RIGHT - aw, 806, 6.5, 7.5)   # right-justified to the strip end
+    y = 768
+    strip_bottom = y
+    for c, m, ye, k, label in inks:
+        ops.append(rect(ML, y - BH, CW, BH, c, m, ye, k))
+        ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, label))
+        strip_bottom = y - BH
+        y = strip_bottom - GAP
+    sx, qw = ML, CW / 4.0
+else:
+    # redesign: half-width strip on the right (frees the left half for the header)
+    strip_left = W / 2.0
+    strip_w = RIGHT - strip_left
+    y = 800
+    strip_bottom = y
+    bar_span = {}                  # label -> (top y, bottom y), used by the ribbons
+    for c, m, ye, k, label in inks:
+        ops.append(rect(strip_left, y - BH, strip_w, BH, c, m, ye, k))
+        ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, label))
+        bar_span[label] = (y, y - BH)
+        strip_bottom = y - BH
+        y = strip_bottom - GAP
+    sx, qw = strip_left, strip_w / 4.0
 
-y = 800
-strip_bottom = y
-for c, m, ye, k, label in inks:
-    ops.append(rect(strip_left, y - BH, strip_w, BH, c, m, ye, k))
-    ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, label))  # tiny label in the right margin
-    strip_bottom = y - BH
-    y = strip_bottom - GAP
-
-# divider below the strip: one rule split into four equal C/M/Y/K quarters,
-# doubling as the ink gauge. The level(s) print above it — a single "Colour"
-# reading spanning C/M/Y for a combined tri-colour cartridge, else one per channel.
+# divider: one rule split into four C/M/Y/K quarters, doubling as the ink gauge.
+# The level(s) print above it — a single "Colour" reading spanning C/M/Y for a
+# combined tri-colour cartridge, else one per channel. sx/qw are set per layout.
 rule_y = strip_bottom - 16
-qw = strip_w / 4.0
 for i, (c, m, ye, k) in enumerate([(1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0,1)]):
-    ops.append(line(strip_left + i*qw, rule_y, strip_left + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
+    ops.append(line(sx + i*qw, rule_y, sx + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
 
 def gauge(xc, lvl, lbl=""):
     if lvl in ("", "-"): return
     ops.append(ctext(xc, rule_y + 4, 7, 0.6, (lbl + " " if lbl else "") + lvl + "%"))
 
 if ink_mode == "combined":
-    # one label centred over the C/M/Y span (first three quarters), one over K.
-    gauge(strip_left + 1.5 * qw, ink_tok[1] if len(ink_tok) > 1 else "-", "Colour")
-    gauge(strip_left + 3.5 * qw, ink_tok[2] if len(ink_tok) > 2 else "-", "Black")
-    # a thin brace under the C/M/Y quarters to show they share one cartridge
-    by = rule_y - 5
-    ops.append(line(strip_left + 4, by, strip_left + 3 * qw - 4, by, 0.5, 0, 0, 0, 0.30))
-    ops.append(line(strip_left + 4, by, strip_left + 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
-    ops.append(line(strip_left + 3 * qw - 4, by, strip_left + 3 * qw - 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+    gauge(sx + 1.5 * qw, ink_tok[1] if len(ink_tok) > 1 else "-", "Colour")
+    gauge(sx + 3.5 * qw, ink_tok[2] if len(ink_tok) > 2 else "-", "Black")
+    by = rule_y - 5                # a thin brace: the C/M/Y quarters share one cartridge
+    ops.append(line(sx + 4, by, sx + 3 * qw - 4, by, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(sx + 4, by, sx + 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(sx + 3 * qw - 4, by, sx + 3 * qw - 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
 elif ink_mode == "separate":
     for i, v in enumerate(ink_tok[1:5]):
-        gauge(strip_left + (i + 0.5) * qw, v)
+        gauge(sx + (i + 0.5) * qw, v)
 
 if ink_mode in ("combined", "separate"):
     ops.append(text(RIGHT + 6, rule_y - 2, 6, 0.45, "INK LEVELS"))
 
-# header in the freed left half: title (bold, tracked), wrapped info, project link
-# and the rotating ASCII art, stacked top→down and kept clear of the strip/notes.
-ops.append(text(ML, 792, 12, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.2))
-maxw = strip_left - ML - 10        # left-column width, minus a gutter before the strip
-parts = [p.strip() for p in subtitle.split("·") if p.strip()]
-parts.insert(1, f"{tier} flush") if parts else parts.append(f"{tier} flush")
-ilines, cur = [], ""
-for p in parts:
-    cand = (cur + "  ·  " + p) if cur else p
-    if not cur or len(cand) * 7.5 * 0.5 <= maxw:
-        cur = cand
-    else:
-        ilines.append(cur); cur = p
-if cur: ilines.append(cur)
-iy = 776
-for ln in ilines[:2]:
-    ops.append(text(ML, iy, 7.5, 0.45, ln)); iy -= 10
-ops.append(text(ML, 756, 6.5, 0.5, "github.com/Lucid06-K/printer-keepalive"))
-if 0 <= art_idx < len(ART):
-    art_block(ART[art_idx], ML, 750, 5.5, 6.5)
+# ===== redesign header: title/info/repo on the left, CMYK ribbons to the strip =====
+if layout != "classic":
+    # Four stacked lines, each with a CMYK ribbon that extrudes from its bar at full
+    # thickness and tapers, curving, to a thin underline: title=K, date=Y, computer=M,
+    # repo=C. The reversed colour map makes the ribbons criss-cross back to the strip.
+    sp = [p.strip() for p in subtitle.split("·")]
+    def part(i): return sp[i] if i < len(sp) and sp[i] else ""
+    line1 = "  ·  ".join([s for s in (part(0), f"{tier} flush", part(1)) if s])  # date · flush · last-run
+    host_s = part(2)                                                            # computer name
+    TX = ML + 32                   # info text starts to the right of the art column
+    def fit(s, size, x0):          # truncate so a line never runs into the strip
+        n = int((strip_left - 6 - x0) / (size * 0.5))
+        return s if len(s) <= n else s[:max(0, n - 1)]
+    ops.append(text(ML, 794, 12, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.2))
+    ops.append(text(TX, 778, 7, 0.45, fit(line1, 7, TX)))
+    ops.append(text(TX, 764, 7.5, 0.45, fit(host_s, 7.5, TX)))
+    ops.append(text(TX, 750, 6.5, 0.50, fit(REPO, 6.5, TX)))
+    xT = strip_left - 34           # where the thin underline ends and the taper begins
+    for uy, xL, lab in [(789, ML, "K"), (772, TX, "Y"), (758, TX, "M"), (744, TX, "C")]:
+        bt, bb = bar_span[lab]
+        cc = {"C": (1,0,0,0), "M": (0,1,0,0), "Y": (0,0,1,0), "K": (0,0,0,1)}[lab]
+        ops.append(ribbon(xL, xT, strip_left, uy, bt, bb, 1.3, cc[0], cc[1], cc[2], cc[3]))
+    # rotating art, tucked into the empty inner-left margin beside the info lines
+    if 0 <= art_idx < len(ART):
+        art_block(ART[art_idx], ML, 776, 5.5, 6.5)
+    # heavy's tall strip leaves the left side empty — fill it with note rules too
+    if tier == "heavy":
+        note_split_x = strip_left
+        notes_left_top = 724
 
 # note paper below (optional): lines / grid / dots, edge to edge, down to the
 # bottom of the page (the printer's own unprintable margin trims the extremes).
@@ -367,15 +417,21 @@ if style != "off":
     BM = 16                       # extend nearly to the bottom edge
     notes_top = rule_y - 30
     GK = 0.14                     # rule/dot grey (CMYK K)
-    ops.append(text(ML, notes_top + 12, 7, 0.32, "Notes", font="F2"))
-    # a place to write the date, top-right of the note area
+    # In the heavy redesign the tall strip leaves the left half empty, so note rules
+    # there start higher (lnt) and span only the left until they clear the strip
+    # (splitx); below the strip every rule is full width, as in every other case.
+    lnt = notes_left_top if notes_left_top else notes_top
+    splitx = note_split_x if note_split_x else W
+    ops.append(text(ML, lnt + 12, 7, 0.32, "Notes", font="F2"))
+    # a place to write the date, top-right of the (full-width) note area
     ops.append(text(RIGHT - 100, notes_top + 12, 7, 0.32, "Date", font="F2"))
     ops.append(line(RIGHT - 78, notes_top + 10, RIGHT, notes_top + 10, 0.5, 0, 0, 0, 0.30))
     # horizontal rules (lines + grid)
     if style in ("lines", "grid"):
-        yy = notes_top
+        yy = lnt
         while yy > BM:
-            ops.append(line(0, yy, W, yy, 0.5, 0, 0, 0, GK))
+            xend = W if yy <= notes_top else splitx     # beside the strip → left half only
+            ops.append(line(0, yy, xend, yy, 0.5, 0, 0, 0, GK))
             yy -= spacing
     # vertical rules (grid only), centred so the columns sit symmetrically
     if style == "grid":
@@ -384,23 +440,23 @@ if style != "off":
         xx = x0
         while xx < W:
             if xx > 0:
-                ops.append(line(xx, notes_top, xx, BM, 0.5, 0, 0, 0, GK))
+                ops.append(line(xx, (lnt if xx < splitx else notes_top), xx, BM, 0.5, 0, 0, 0, GK))
             xx += spacing
     # dot grid: a small dot at each intersection
     if style == "dots":
         n = int(W / spacing)
         x0 = (W - n * spacing) / 2.0
-        yy = notes_top
+        yy = lnt
         while yy > BM:
             xx = x0
             while xx < W:
-                if xx > 0:
+                if xx > 0 and (yy <= notes_top or xx < splitx):
                     ops.append(rect(xx - 0.6, yy - 0.6, 1.2, 1.2, 0, 0, 0, 0.45))
                 xx += spacing
             yy -= spacing
     # optional school-workbook left margin line, a set distance from the edge
     if margin_on and 0 < margin_x < W:
-        ops.append(line(margin_x, notes_top + 6, margin_x, BM, 0.8, 0, 0.6, 0.5, 0))
+        ops.append(line(margin_x, lnt + 6, margin_x, BM, 0.8, 0, 0.6, 0.5, 0))
 
 # subtle footer to identify the page — only on a blank page, so it stays out of
 # the way when the sheet is being used as note paper
