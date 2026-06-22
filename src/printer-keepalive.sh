@@ -282,7 +282,7 @@ if 0 <= art_idx < len(ART):
     a = ART[art_idx]
     asz, alead = 6.5, 7.5
     aw = max(len(l) for l in a) * asz * 0.6        # Courier glyphs are 0.6em wide
-    art_block(a, (W - 8) - aw, 806, asz, alead)
+    art_block(a, RIGHT - aw, 806, asz, alead)      # right edge aligned to the strip's end
 # ink: "combined <colour> <k>" or "separate <c> <m> <y> <k>" — drawn on the divider.
 ink_tok = ink.split() if ink else []
 ink_mode = ink_tok[0] if ink_tok else ""
