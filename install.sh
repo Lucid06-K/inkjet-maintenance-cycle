@@ -2,7 +2,7 @@
 # Copyright 2026
 # SPDX-License-Identifier: Apache-2.0
 #
-# Installer for Printer Keep-Alive.
+# Installer for Printer Don't Die Please!!.
 #   - ~/Library/Scripts/printer-keepalive.sh   the worker (prints + notifies + logs)
 #   - ~/Library/Scripts/pkeep                  the control UI / CLI
 #   - ~/Library/Scripts/PrinterKeepaliveNotifier.app   posts notifications
@@ -25,7 +25,7 @@ bold() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 info() { printf '  \033[2m•\033[0m %s\n' "$1"; }
 
-bold "Printer Keep-Alive — installing for $(whoami)"
+bold "Printer Don't Die Please!! — installing for $(whoami)"
 
 # 1) scripts ----------------------------------------------------------------
 mkdir -p "$SCRIPTS" "$AGENTS" "$HOME/Library/Logs"
@@ -39,7 +39,7 @@ ok "Installed scripts into ~/Library/Scripts"
 # applet receives its payload via env vars (PKA_TITLE / PKA_BODY) because an
 # osacompile applet's binary does NOT get command-line argv under launchd.
 NOTIFY_AS='on run argv
-    set theTitle to "Printer Keep-Alive"
+    set theTitle to "Printer Don'\''t Die Please!!"
     set theBody to ""
     try
         set theBody to (system attribute "PKA_BODY")
@@ -112,14 +112,14 @@ RC_DISP="${RC/#$HOME/~}"
 if grep -q 'alias pkeep=' "$RC" 2>/dev/null; then
     info "'pkeep' alias already present in $RC_DISP"
 else
-    printf '\n# Printer Keep-Alive — nozzle anti-clog control\nalias pkeep="%s"\n' "$CTL" >> "$RC"
+    printf '\n# Printer Don'\''t Die Please!! — nozzle anti-clog control\nalias pkeep="%s"\n' "$CTL" >> "$RC"
     ok "Added 'pkeep' alias to $RC_DISP"
 fi
 
 # 6) notification permission prompt ----------------------------------------
 echo
 bold "One-time permission — macOS may ask to allow Notifications. Click Allow."
-PKA_BODY="Printer Keep-Alive is installed 🎉" PKA_TITLE="Printer Keep-Alive" \
+PKA_BODY="Printer Don't Die Please!! is installed 🎉" PKA_TITLE="Printer Don't Die Please!!" \
     "$NOTIFY_APP/Contents/MacOS/applet" >/dev/null 2>&1 || true
 
 echo

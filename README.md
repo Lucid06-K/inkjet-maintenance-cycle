@@ -1,4 +1,4 @@
-# Printer Keep-Alive
+# Printer Don't Die Please!!
 
 Keeps an idle **inkjet** printer's nozzles from drying out / clogging by
 printing a tiny page on a schedule. A compact **test strip** of all ink

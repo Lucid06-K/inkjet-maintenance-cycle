@@ -2,7 +2,7 @@
 # Copyright 2026 Lucid06-K
 # SPDX-License-Identifier: Apache-2.0
 #
-# Printer Keep-Alive — release helper.
+# Printer Don't Die Please!! — release helper.
 #
 # One command to cut a release so the easy-to-forget steps can't be skipped:
 # bump BOTH version sources, regenerate the checksum manifest, and — critically —
@@ -61,7 +61,7 @@ CUR=$(grep -m1 '^VERSION=' "$CTL_SRC" | cut -d'"' -f2)
 ver_gt "$NEW" "$CUR" || die "new version $NEW is not greater than current $CUR"
 [ -r "$KEY" ] || die "signing key not found at $KEY — set PKEEP_SIGNING_KEY or see SIGNING.md"
 
-bold "Releasing Printer Keep-Alive  v$CUR → v$NEW"
+bold "Releasing Printer Don't Die Please!!  v$CUR → v$NEW"
 info "signing key: $KEY"
 [ "$DRY" = 1 ] && info "DRY RUN — nothing will be changed, signed, or pushed"
 

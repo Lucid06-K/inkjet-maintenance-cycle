@@ -1,6 +1,6 @@
 # Security Policy
 
-Thanks for helping keep **Printer Keep-Alive** and its users safe.
+Thanks for helping keep **Printer Don't Die Please!!** and its users safe.
 
 ## Supported versions
 

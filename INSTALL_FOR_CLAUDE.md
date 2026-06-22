@@ -1,7 +1,7 @@
 # Install guide — for Claude Code
 
 **You are Claude Code, running on the printer owner's Mac. Your job: install and
-configure "Printer Keep-Alive" for the user (the printer owner), then verify it
+configure "Printer Don't Die Please!!" for the user (the printer owner), then verify it
 works.** Follow these steps in order. Run the commands yourself; only ask the
 user where a human decision is required (which printer, permission to print a
 test page, clicking the macOS permission prompt).
@@ -109,7 +109,7 @@ some clogging and the user should run its built-in cleaning once.
 
 If the user didn't see a notification during the test, fire one directly:
 ```sh
-PKA_TITLE="Printer Keep-Alive" PKA_BODY="Test ✅" \
+PKA_TITLE="Printer Don't Die Please!!" PKA_BODY="Test ✅" \
   ~/Library/Scripts/PrinterKeepaliveNotifier.app/Contents/MacOS/applet
 ```
 If still nothing, open System Settings ▸ Notifications and ensure

@@ -170,7 +170,7 @@ def line(x1, y1, x2, y2, w, c, m, ye, k):
 
 ops = []
 # header: title (bold, tracked) + subtitle (muted)
-ops.append(text(ML, 802, 13, 0.82, "PRINTER KEEP ALIVE", font="F2", tc=1.6))
+ops.append(text(ML, 802, 13, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.6))
 sub = subtitle.strip()
 sub = (sub + "  -  " if sub else "") + f"{tier} flush"
 ops.append(text(ML, 788, 8, 0.45, sub))
@@ -229,7 +229,7 @@ if style != "off":
 # subtle footer to identify the page — only on a blank page, so it stays out of
 # the way when the sheet is being used as note paper
 if style == "off":
-    ops.append(text(ML, 40, 6.5, 0.35, "Printer Keep-Alive  ·  inkjet nozzle maintenance"))
+    ops.append(text(ML, 40, 6.5, 0.35, "Printer Don't Die Please!!  ·  inkjet nozzle maintenance"))
 
 content = ("\n".join(ops) + "\n").encode("latin-1")
 
@@ -296,12 +296,12 @@ fi
 
 if [ "$PCOUNT" -eq 0 ]; then
     echo "[$TS] ERROR: no printer selected and no system default" | tee -a "$LOG" >&2
-    notify "Printer keep-alive failed" "No printer configured."
+    notify "Printer Don't Die Please!! — failed" "No printer configured."
     exit 1
 fi
 
 # --- heads-up FIRST, then a short lead so it's actually a heads-up ----------
-notify "Printer keep-alive" "$body"
+notify "Printer Don't Die Please!!" "$body"
 LEAD=$(get_lead); [ "$LEAD" -gt 0 ] && sleep "$LEAD"
 
 COPIES=1; [ "$TIER" = heavy ] && COPIES=2
@@ -325,6 +325,6 @@ if [ "$DAYS" -lt 0 ]; then gapmsg="first run"; else gapmsg="gap was ${DAYS}d"; f
 echo "[$TS] printed $TIER keep-alive to $OK/$PCOUNT printer(s); $gapmsg" | tee -a "$LOG"
 
 if [ -n "$FAILED" ]; then
-    notify "Printer keep-alive failed" "Could not print to:$FAILED"
+    notify "Printer Don't Die Please!! — failed" "Could not print to:$FAILED"
     [ "$OK" -eq 0 ] && exit 1
 fi

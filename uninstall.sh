@@ -2,7 +2,7 @@
 # Copyright 2026
 # SPDX-License-Identifier: Apache-2.0
 #
-# Uninstaller for Printer Keep-Alive. Removes the agent, scripts, applet and
+# Uninstaller for Printer Don't Die Please!!. Removes the agent, scripts, applet and
 # alias. State/log files are left in place unless you pass --purge.
 set -euo pipefail
 
@@ -25,7 +25,7 @@ ok "Removed scripts and notifier app"
 for RC in "$HOME/.zshrc" "$HOME/.bashrc"; do
     [ -f "$RC" ] || continue
     if grep -q 'alias pkeep=' "$RC"; then
-        sed -i '' '/# Printer Keep-Alive — nozzle anti-clog control/d; /alias pkeep=/d' "$RC" 2>/dev/null || true
+        sed -i '' '/nozzle anti-clog control/d; /alias pkeep=/d' "$RC" 2>/dev/null || true
         ok "Removed alias from ${RC/#$HOME/~}"
     fi
 done
