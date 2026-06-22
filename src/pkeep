@@ -1,0 +1,486 @@
+#!/bin/bash
+# Copyright 2026
+# SPDX-License-Identifier: Apache-2.0
+#
+# pkeep — control the printer nozzle keep-alive launchd agent.
+#
+# Run bare for an interactive UI (↑/↓ to move, enter to select, q to quit).
+# Scriptable subcommands:
+#   pkeep on|off            enable/disable the scheduled keep-alive
+#   pkeep status            one-shot text status
+#   pkeep run [tier]        print now (light|medium|heavy; default auto)
+#   pkeep preview [tier]    build + open the page without printing
+#   pkeep log [n]           last n history lines (default 15)
+#   pkeep notify on|off     toggle the heads-up notification
+#   pkeep printer           list selected printers
+#   pkeep printer NAME      set the list to just NAME
+#   pkeep printer add NAME  add a printer to the cycle
+#   pkeep printer rm NAME   remove a printer from the cycle
+#   pkeep interval [days]   show / set the schedule interval
+#   pkeep lead [secs]       show / set the heads-up lead time
+#   pkeep update            fetch + verify + install the latest version
+#   pkeep autoupdate on|off opt-in daily auto-update
+#
+# The worker lives in printer-keepalive.sh next to this file (installed copy:
+# ~/Library/Scripts/printer-keepalive.sh).
+
+LABEL="com.printer-keepalive.agent"
+TARGET="gui/$(id -u)/$LABEL"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+SCRIPTS="$HOME/Library/Scripts"
+WORKER="$SCRIPTS/printer-keepalive.sh"
+[ -x "$WORKER" ] || WORKER="$(cd "$(dirname "$0")" && pwd)/printer-keepalive.sh"
+LOG="$HOME/Library/Logs/printer-keepalive.log"
+
+PRINTER_FILE="$SCRIPTS/printer_keepalive.printer"
+INTERVAL_FILE="$SCRIPTS/printer_keepalive.interval"
+LEAD_FILE="$SCRIPTS/printer_keepalive.lead"
+NONOTIFY_FLAG="$SCRIPTS/printer_keepalive.nonotify"
+LASTPRINT_FILE="$SCRIPTS/printer_keepalive.lastprint"
+HISTORY_FILE="$SCRIPTS/printer_keepalive.history"
+
+# auto-update (opt-in): checks at most once a day when the menu opens
+AUTOUPDATE_FLAG="$SCRIPTS/printer_keepalive.autoupdate"
+UPDATE_STAMP="$SCRIPTS/.printer_keepalive.update_check"
+WORKER_DEST="$SCRIPTS/printer-keepalive.sh"   # where the worker is installed
+SELF_DEST="$SCRIPTS/pkeep"                     # where this control script is installed
+REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
+
+DEFAULT_INTERVAL=1209600
+DEFAULT_LEAD=8
+VERSION="1.0.0"
+
+# Public key for verifying the update manifest's signature. The matching private
+# key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
+# Verification uses THIS installed script's baked-in key (trust on first use),
+# never a freshly downloaded one — so a repo/CDN/TLS compromise alone can't push
+# code; the attacker would also need the offline key. Updating fails closed if
+# the signature is missing or wrong.
+UPDATE_PUBKEY="-----BEGIN PUBLIC KEY-----
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxz5zobQ4kiObi7ncd/dq
+sGtnDvLWPbHcB7wJO2A1q/KBuUoqIR9/Oc2jnRctBtaNnaqxz9Wy0VUYjjSeK2Ue
+Hk3e74eUEBpYLtqrbtoiZW9JZHhmM9SAAmnfrDU3CY72UQloKX7lsVy3YPe5rv9Y
+2wmzMxYBopR0wWosqM/HejArJbCXZCazR7hrmZsUdiwP3sueOihJu45gNC3zSVBQ
+r0RGHcCNnGfmJ/hlkKXWhRmyQOoQNPRh4oj83KWgdDd/BvyHOWInXUBaO81zLvDK
+SwZs68jvUoVmuRLBHN5zq0dsFORXJZSJgnBn5WSbvHcSI7zhIst+Ofl5q9w1rf8V
+vNOaD1bDocV7VYSm4Ggt3HuUUAslHvi6yr0inAOUBACF1ly1xRWZAo9QagOj35T1
+V/LikdSCQeTIv1wjdgfNIozmxFiBqDLDF2JbspbgOoCJD2VQOJNqaanesOXWfLKi
+Lj8KV3AbURsbzg/soOTa+Qqw8xK7+wPu7Ucj0DI9SuX5AgMBAAE=
+-----END PUBLIC KEY-----"
+
+R=$'\033[0m'; REV=$'\033[7m'; DIM=$'\033[2m'; GRN=$'\033[32m'; BLD=$'\033[1m'
+
+# --- state readers (mirror the worker) -------------------------------------
+trim() { tr -d ' \t\n\r'; }
+is_loaded()  { launchctl print "$TARGET" >/dev/null 2>&1; }
+notify_on()  { [ ! -e "$NONOTIFY_FLAG" ]; }
+# --- printer selection (multiple allowed) ----------------------------------
+# Selected printers live one-per-line in PRINTER_FILE. Empty => fall back to the
+# system default destination.
+get_printers() {
+    if [ -r "$PRINTER_FILE" ] && [ -s "$PRINTER_FILE" ]; then grep -vE '^[[:space:]]*$' "$PRINTER_FILE"
+    else lpstat -d 2>/dev/null | sed -n 's/^system default destination: //p' | head -1; fi
+}
+available_printers() { lpstat -p 2>/dev/null | awk '{print $2}'; }
+sel_count() { [ -s "$PRINTER_FILE" ] && grep -cvE '^[[:space:]]*$' "$PRINTER_FILE" 2>/dev/null || echo 0; }
+is_selected() { [ -s "$PRINTER_FILE" ] && grep -Fxq -- "$1" "$PRINTER_FILE"; }
+add_printer() { is_selected "$1" || printf '%s\n' "$1" >> "$PRINTER_FILE"; }
+remove_printer() {
+    [ -s "$PRINTER_FILE" ] || return 0
+    grep -Fxv -- "$1" "$PRINTER_FILE" > "$PRINTER_FILE.tmp" 2>/dev/null; mv "$PRINTER_FILE.tmp" "$PRINTER_FILE"
+}
+toggle_printer() { if is_selected "$1"; then remove_printer "$1"; else add_printer "$1"; fi; }
+set_only_printer() { printf '%s\n' "$1" > "$PRINTER_FILE"; }   # replace list with one
+# one-line summary for the status header
+printers_summary() {
+    local n first; n=$(sel_count); first=$(get_printers | head -1)
+    if [ "$(printf '%s' "$first" | trim)" = "" ]; then echo "(none — add one)"; return; fi
+    if [ "$n" -eq 0 ];   then echo "default: $first"
+    elif [ "$n" -eq 1 ]; then echo "$first"
+    else echo "$first (+$((n-1)) more)"; fi
+}
+get_interval() { local v=""; [ -r "$INTERVAL_FILE" ] && v=$(trim < "$INTERVAL_FILE"); case "$v" in ''|*[!0-9]*) echo "$DEFAULT_INTERVAL";; *) echo "$v";; esac; }
+get_lead()     { local v=""; [ -r "$LEAD_FILE" ] && v=$(trim < "$LEAD_FILE"); case "$v" in ''|*[!0-9]*) echo "$DEFAULT_LEAD";; *) echo "$v";; esac; }
+get_last()     { local v=""; [ -r "$LASTPRINT_FILE" ] && v=$(trim < "$LASTPRINT_FILE"); case "$v" in ''|*[!0-9]*) echo 0;; *) echo "$v";; esac; }
+
+# --- formatting ------------------------------------------------------------
+fmt_days() { local s="$1"; echo "$(( s / 86400 ))d"; }            # secs -> "14d"
+last_phrase() {
+    local last now d; last=$(get_last); now=$(date +%s)
+    [ "$last" -le 0 ] && { echo "never"; return; }
+    d=$(( (now - last) / 86400 ))
+    if [ "$d" -le 0 ]; then echo "today"; else echo "${d}d ago"; fi
+}
+next_phrase() {
+    local last iv now nxt d; last=$(get_last); iv=$(get_interval); now=$(date +%s)
+    [ "$last" -le 0 ] && { echo "after first run"; return; }
+    nxt=$(( last + iv )); d=$(( (nxt - now) / 86400 ))
+    if   [ "$nxt" -gt "$now" ]; then echo "in ${d}d"
+    elif [ "$d" -eq 0 ];        then echo "due now"
+    else echo "overdue $(( -d ))d"; fi
+}
+# what tier WOULD print right now (asks the worker so logic stays in one place)
+auto_tier() {
+    local last iv now el; last=$(get_last); iv=$(get_interval); now=$(date +%s)
+    [ "$last" -le 0 ] && { echo light; return; }
+    el=$(( now - last ))
+    if   [ "$el" -le $(( iv * 3 / 2 )) ]; then echo light
+    elif [ "$el" -le $(( iv * 3 ))     ]; then echo medium
+    else echo heavy; fi
+}
+
+# --- agent control ---------------------------------------------------------
+agent_on()  { launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; launchctl enable "$TARGET" 2>/dev/null; }
+agent_off() { launchctl disable "$TARGET" 2>/dev/null; launchctl bootout "$TARGET" 2>/dev/null; }
+reload_agent() { launchctl bootout "$TARGET" 2>/dev/null; launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; }
+
+set_interval_days() {   # $1 = days
+    local days="$1" secs
+    case "$days" in ''|*[!0-9]*) return 1;; esac
+    [ "$days" -lt 1 ] && return 1
+    secs=$(( days * 86400 ))
+    printf '%s\n' "$secs" > "$INTERVAL_FILE"
+    if [ -f "$PLIST" ]; then
+        /usr/libexec/PlistBuddy -c "Set :StartInterval $secs" "$PLIST" 2>/dev/null \
+          || /usr/libexec/PlistBuddy -c "Add :StartInterval integer $secs" "$PLIST" 2>/dev/null
+        is_loaded && reload_agent
+    fi
+}
+set_lead_secs() { case "$1" in ''|*[!0-9]*) return 1;; esac; printf '%s\n' "$1" > "$LEAD_FILE"; }
+
+# --- one-shot text status --------------------------------------------------
+status_text() {
+    is_loaded && echo "Agent:         ON" || echo "Agent:         OFF"
+    local n; n=$(sel_count)
+    if [ "$n" -gt 1 ]; then
+        echo "Printers:      $n selected"
+        get_printers | sed 's/^/                 - /'
+    else
+        echo "Printer:       $(printers_summary)"
+    fi
+    echo "Schedule:      every $(fmt_days "$(get_interval)")"
+    echo "Last print:    $(last_phrase)"
+    echo "Next (est):    $(next_phrase)"
+    echo "Would print:   $(auto_tier) flush now"
+    notify_on && echo "Notifications: on" || echo "Notifications: off"
+    echo "Heads-up lead: $(get_lead)s"
+    autoupdate_on && echo "Auto-update:   on (daily, verified)" || echo "Auto-update:   off (manual: pkeep update)"
+    echo "Version:       $VERSION"
+}
+
+# ===========================================================================
+# Auto-update (mirrors dsort: HTTPS-pinned fetch, RSA-signed manifest, checksum
+# + syntax check, .bak backup; verifies with the baked-in public key).
+# ===========================================================================
+autoupdate_on() { [ -e "$AUTOUPDATE_FLAG" ]; }
+# true if version $1 is strictly newer than $2 (dotted semver, via sort -V)
+ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+CURL_SAFE='curl -fsSL --proto =https --proto-redir =https --max-redirs 3'
+
+# Fetch + verify + install the latest scripts. Returns 0 if updated or already
+# current, 1 on any failure (leaving the installed files untouched).
+run_update() {
+    command -v curl    >/dev/null 2>&1 || { echo "curl is required for updates."; return 1; }
+    command -v openssl >/dev/null 2>&1 || { echo "openssl is required to verify updates."; return 1; }
+    local tmp newver instver
+    echo "Checking github.com/Lucid06-K/printer-keepalive …"
+    newver=$($CURL_SAFE "$REPO_RAW/VERSION" 2>/dev/null | tr -dc '0-9.')
+    [ -n "$newver" ] || { echo "Couldn't reach the update server (check your connection)."; return 1; }
+    echo "  installed: v$VERSION    latest: v$newver"
+    [ "$newver" = "$VERSION" ] && { echo "You're already up to date."; return 0; }
+    if ! ver_gt "$newver" "$VERSION"; then
+        echo "Your version (v$VERSION) is newer than the server's (v$newver) — keeping yours."
+        echo "(If the server was just updated, its CDN can lag a few minutes; try again shortly.)"
+        return 0
+    fi
+    tmp=$(mktemp -d)
+    $CURL_SAFE "$REPO_RAW/src/printer-keepalive.sh" -o "$tmp/printer-keepalive.sh" 2>/dev/null
+    $CURL_SAFE "$REPO_RAW/src/pkeep"                 -o "$tmp/pkeep"               2>/dev/null
+    $CURL_SAFE "$REPO_RAW/SHA256SUMS"                -o "$tmp/SHA256SUMS"          2>/dev/null
+    $CURL_SAFE "$REPO_RAW/SHA256SUMS.sig"            -o "$tmp/SHA256SUMS.sig"      2>/dev/null
+    if [ ! -s "$tmp/printer-keepalive.sh" ] || [ ! -s "$tmp/pkeep" ]; then
+        echo "Download failed — nothing changed."; rm -rf "$tmp"; return 1; fi
+    if [ ! -s "$tmp/SHA256SUMS" ]; then
+        echo "✗ Couldn't fetch checksums — refusing to install unverified code."; rm -rf "$tmp"; return 1; fi
+    if [ ! -s "$tmp/SHA256SUMS.sig" ]; then
+        echo "✗ Update is not signed — refusing to install. Aborting."; rm -rf "$tmp"; return 1; fi
+    printf '%s\n' "$UPDATE_PUBKEY" > "$tmp/update.pub"
+    if ! openssl dgst -sha256 -verify "$tmp/update.pub" -signature "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS" >/dev/null 2>&1; then
+        echo "✗ Signature check FAILED — manifest not signed by the project key. Aborting."; rm -rf "$tmp"; return 1; fi
+    echo "  ✓ signature verified"
+    if ! ( cd "$tmp" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1 ); then
+        echo "✗ Integrity check FAILED — download didn't match published checksums. Aborting."; rm -rf "$tmp"; return 1; fi
+    echo "  ✓ checksums verified"
+    if ! bash -n "$tmp/printer-keepalive.sh" || ! bash -n "$tmp/pkeep"; then
+        echo "✗ Downloaded files failed a syntax check — nothing changed."; rm -rf "$tmp"; return 1; fi
+    # authoritative version = what the verified pkeep reports (pointer is advisory)
+    instver=$(grep -m1 '^VERSION=' "$tmp/pkeep" | cut -d'"' -f2); instver="${instver:-$newver}"
+    cp "$WORKER_DEST" "$WORKER_DEST.bak" 2>/dev/null; cp "$SELF_DEST" "$SELF_DEST.bak" 2>/dev/null
+    install -m 0755 "$tmp/printer-keepalive.sh" "$WORKER_DEST"
+    install -m 0755 "$tmp/pkeep" "$SELF_DEST"
+    rm -rf "$tmp"
+    echo "Updated v$VERSION → v$instver ✓   (previous saved as *.bak)"
+    echo "Re-open pkeep to use the new version."
+}
+
+# called when the menu opens: if auto-update is ON and a day has passed, check
+# and (if newer) install via the same verified path as a manual update.
+maybe_autoupdate() {
+    autoupdate_on || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    local last now newver
+    if [ -f "$UPDATE_STAMP" ]; then
+        last=$(stat -f %m "$UPDATE_STAMP" 2>/dev/null || echo 0); now=$(date +%s)
+        [ $((now - last)) -lt 86400 ] && return 0
+    fi
+    touch "$UPDATE_STAMP"
+    newver=$($CURL_SAFE "$REPO_RAW/VERSION" 2>/dev/null | tr -dc '0-9.')
+    [ -n "$newver" ] && ver_gt "$newver" "$VERSION" || return 0
+    echo "Auto-update: a newer version (v$newver) is available — installing…"
+    run_update
+    printf '\n  press any key to open the menu… '; IFS= read -r -s -n 1 _ 2>/dev/null
+}
+
+# ===========================================================================
+# Interactive UI (mirrors dsort: flicker-free repaint, focus highlight)
+# ===========================================================================
+SCREEN=main; focus=0; MSG=""
+MAIN_MAX=8      # selectable indices 0..8
+SET_MAX=5       # 0..5
+AVAIL=()        # available printers, populated when the chooser opens
+
+_paint() {
+    printf '\033[H'
+    printf '%s\n' "$1" | while IFS= read -r _pl || [ -n "$_pl" ]; do printf '%s\033[K\n' "$_pl"; done
+    printf '\033[J'
+}
+draw() { _paint "$(_draw_body)"; }
+
+row() {  # row <index> <plain-when-unfocused> ; focused row is reverse-video
+    local i="$1" text="$2"
+    if [ "$i" -eq "$focus" ]; then printf '  %s ▸ %-44s%s\n' "$REV" "$text" "$R"
+    else printf '     %s\n' "$text"; fi
+}
+
+_draw_body() {
+    local SEP="${DIM}──────────────────────────────────────────────────${R}"
+    local agent printer; printer=$(printers_summary)
+    is_loaded && agent="${GRN}● ON${R}" || agent="${DIM}○ OFF${R}"
+
+    if [ "$SCREEN" = printers ]; then
+        printf '\n  %s %s\n' "${BLD}Printer Keep-Alive${R}" "${DIM}· Choose printers${R}"
+        printf '  %s\n' "$SEP"
+        if [ "${#AVAIL[@]}" -eq 0 ]; then
+            printf '   %s\n' "${DIM}No printers found. Add one in System Settings ▸ Printers.${R}"
+        else
+            local i=0 name mark
+            for name in "${AVAIL[@]}"; do
+                if is_selected "$name"; then mark="${GRN}●${R}"; else mark="${DIM}○${R}"; fi
+                row "$i" "$mark  $name"
+                i=$((i+1))
+            done
+        fi
+        printf '  %s\n' "$SEP"
+        row "${#AVAIL[@]}" "← Done"
+        printf '  %s\n' "$SEP"
+        printf '  %s\n' "${DIM}Selected printers all get the keep-alive each cycle.${R}"
+        printf '  %s\n' "${GRN}${MSG}${R}"
+        printf '\n  %s\n' "${DIM}↑/↓ move · enter toggle · esc/Done back · q quit${R}"
+    elif [ "$SCREEN" = settings ]; then
+        printf '\n  %s %s\n' "${BLD}Printer Keep-Alive${R}" "${DIM}· Settings${R}"
+        printf '  %s\n' "$SEP"
+        local pcount; pcount=$(sel_count)
+        local plabel; if [ "$pcount" -eq 0 ]; then plabel="$printer"; else plabel="$pcount selected ($printer)"; fi
+        row 0 "Notifications      $(notify_on && echo ON || echo OFF)"
+        row 1 "Printers ▸         $plabel"
+        row 2 "Schedule           every $(fmt_days "$(get_interval)")"
+        row 3 "Heads-up lead      $(get_lead)s"
+        row 4 "Auto-update        $(autoupdate_on && echo ON || echo OFF)"
+        printf '  %s\n' "$SEP"
+        row 5 "← Back to menu"
+        printf '  %s\n' "$SEP"
+        printf '  %s\n' "${GRN}${MSG}${R}"
+        printf '\n  %s\n' "${DIM}↑/↓ move · enter select · esc back · q quit${R}"
+    else
+        printf '\n  %s  %s\n' "${BLD}Printer Keep-Alive${R}" "${DIM}v$VERSION${R}"
+        printf '  %s\n' "$SEP"
+        printf '   Agent        %s\n' "$agent"
+        printf '   Printer      %s\n' "$printer"
+        printf '   Schedule     every %s\n' "$(fmt_days "$(get_interval)")"
+        printf '   Last print   %s\n' "$(last_phrase)"
+        printf '   Next (est)   %s\n' "$(next_phrase)"
+        printf '   Notifications %s\n' "$(notify_on && echo on || echo off)"
+        printf '  %s\n' "$SEP"
+        row 0 "$(is_loaded && echo 'Disable scheduled keep-alive' || echo 'Enable scheduled keep-alive')"
+        printf '  %s\n' "$SEP"
+        row 1 "Print keep-alive now   ${DIM}(auto: $(auto_tier))${R}"
+        row 2 "Intensive flush now    ${DIM}(heavy, 2 pages)${R}"
+        row 3 "Preview (dry run)"
+        row 4 "History / log"
+        row 5 "Settings ▸"
+        row 6 "Help"
+        row 7 "Check for updates"
+        printf '  %s\n' "$SEP"
+        row 8 "Quit"
+        printf '  %s\n' "$SEP"
+        printf '  %s\n' "${GRN}${MSG}${R}"
+        printf '\n  %s\n' "${DIM}↑/↓ move · enter select · q quit${R}"
+    fi
+}
+
+read_key() {
+    local k rest
+    IFS= read -r -s -n 1 k || return 1
+    if [ "$k" = $'\033' ]; then
+        IFS= read -r -s -n 2 -t 1 rest 2>/dev/null
+        case "$rest" in '[A') printf up;; '[B') printf down;; *) printf esc;; esac
+    else printf '%s' "$k"; fi
+}
+
+# run something that writes to the terminal, outside the alt-screen repaint
+run_plain() {  # $@ = command
+    printf '\033[2J\033[H'; stty echo icanon 2>/dev/null
+    "$@"
+    printf '\n  %spress any key to return%s' "$DIM" "$R"
+    stty -echo -icanon 2>/dev/null; IFS= read -r -s -n 1 _ 2>/dev/null
+}
+
+prompt_line() {  # $1 = prompt -> echoes the entered line
+    printf '\033[2J\033[H\n  %s' "$1"; stty echo icanon 2>/dev/null
+    local ans; IFS= read -r ans; stty -echo -icanon 2>/dev/null; printf '%s' "$ans"
+}
+
+# load the available printers into AVAIL and switch to the multi-select screen
+open_printers() {
+    AVAIL=(); local name
+    while IFS= read -r name; do [ -n "$name" ] && AVAIL+=("$name"); done < <(available_printers)
+    SCREEN=printers; focus=0; MSG=""
+}
+
+show_history() {
+    if [ ! -s "$HISTORY_FILE" ]; then echo "  No keep-alive prints recorded yet."; else
+        printf '  %sKeep-alive history%s (newest first)\n\n' "$BLD" "$R"
+        printf '  %-19s  %-7s  %-8s  %s\n' "When" "Tier" "Gap" "Printer"
+        printf '  %s\n' "${DIM}-------------------  -------  --------  -------------------${R}"
+        # TSV fields: epoch ISO tier days copies printer. tail -r = newest first
+        # (macOS has no `tac`). Show the 20 most recent.
+        tail -r "$HISTORY_FILE" 2>/dev/null | head -20 | \
+        while IFS=$'\t' read -r _epoch when tier days copies printer; do
+            local gap; if [ "${days:-0}" -lt 0 ] 2>/dev/null; then gap="first"; else gap="${days}d×${copies}"; fi
+            printf '  %-19s  %-7s  %-8s  %s\n' "$when" "$tier" "$gap" "$printer"
+        done
+    fi
+    printf '\n  %srecent log:%s\n' "$DIM" "$R"
+    [ -s "$LOG" ] && tail -n 6 "$LOG" | sed 's/^/  /' || echo "  (log empty)"
+}
+
+cleanup() { stty "$_stty" 2>/dev/null; printf '\033[?25h\033[2J\033[H'; }
+
+ui() {
+    command -v stty >/dev/null || { status_text; exit 0; }
+    _stty=$(stty -g 2>/dev/null)
+    trap cleanup EXIT INT TERM
+    stty -echo -icanon 2>/dev/null; printf '\033[?25l\033[2J'
+    while :; do
+        draw
+        local key; key=$(read_key) || break
+        local max
+        case "$SCREEN" in
+            settings) max=$SET_MAX;;
+            printers) max=${#AVAIL[@]};;   # 0..N-1 printers, N = "Done"
+            *)        max=$MAIN_MAX;;
+        esac
+        case "$key" in
+            up)   focus=$(( focus>0 ? focus-1 : max ));;
+            down) focus=$(( focus<max ? focus+1 : 0 ));;
+            q|Q)  break;;
+            esc)  case "$SCREEN" in settings) SCREEN=main; focus=0; MSG="";; printers) SCREEN=settings; focus=1; MSG="";; esac;;
+            ''|$'\n')
+                if [ "$SCREEN" = printers ]; then
+                    if [ "$focus" -ge "${#AVAIL[@]}" ]; then SCREEN=settings; focus=1; MSG="$(sel_count) printer(s) selected"
+                    else toggle_printer "${AVAIL[$focus]}"; fi
+                elif [ "$SCREEN" = settings ]; then
+                    case "$focus" in
+                        0) if notify_on; then touch "$NONOTIFY_FLAG"; MSG="Notifications OFF"; else rm -f "$NONOTIFY_FLAG"; MSG="Notifications ON"; fi;;
+                        1) open_printers;;
+                        2) local d; d=$(prompt_line "Schedule interval in days (now $(fmt_days "$(get_interval)")): "); set_interval_days "$d" && MSG="Schedule set to every ${d}d" || MSG="Unchanged";;
+                        3) local s; s=$(prompt_line "Heads-up lead in seconds (now $(get_lead)s): "); set_lead_secs "$s" && MSG="Lead set to ${s}s" || MSG="Unchanged";;
+                        4) if autoupdate_on; then rm -f "$AUTOUPDATE_FLAG"; MSG="Auto-update OFF"; else touch "$AUTOUPDATE_FLAG"; MSG="Auto-update ON (checks daily)"; fi;;
+                        5) SCREEN=main; focus=0; MSG="";;
+                    esac
+                else
+                    case "$focus" in
+                        0) if is_loaded; then agent_off; MSG="Scheduled keep-alive disabled"; else agent_on; MSG="Scheduled keep-alive enabled"; fi;;
+                        1) run_plain "$WORKER"; MSG="Printed ($(last_phrase))";;
+                        2) run_plain "$WORKER" --tier heavy; MSG="Intensive flush sent";;
+                        3) "$WORKER" --dry >/dev/null 2>&1; MSG="Preview opened (no print)";;
+                        4) run_plain show_history;;
+                        5) SCREEN=settings; focus=0; MSG="";;
+                        6) run_plain show_help;;
+                        7) run_plain run_update; MSG="";;
+                        8) break;;
+                    esac
+                fi;;
+        esac
+    done
+    cleanup; trap - EXIT INT TERM
+}
+
+show_help() {
+    cat <<EOF
+  Printer Keep-Alive — what it does
+
+  Inkjet nozzles dry out and clog when a printer sits unused. This prints a
+  tiny page that fires every ink channel (C/M/Y/K) across the full printhead
+  on a schedule (default every $(fmt_days "$DEFAULT_INTERVAL")), so the nozzles stay wet.
+
+  It picks intensity from how long it's been since the last successful print
+  — so if the Mac was off/asleep across scheduled runs, it catches up:
+
+     light    1 thin line per channel    — routine, minimal ink
+     medium   3-line comb per channel    — missed ~1-2 runs
+     heavy    solid band per channel x2  — long gap, a deep flush
+
+  Before each print it pops a heads-up notification so nobody's surprised by
+  the printer waking. Every print is logged (see History / log).
+
+  Have more than one printer? Settings ▸ Printers lets you tick several — the
+  keep-alive then runs on every selected printer each cycle.
+
+  Updates: "Check for updates" installs the latest verified version (signed +
+  checksummed). Turn on Settings ▸ Auto-update for a daily check. CLI:
+  'pkeep update', 'pkeep autoupdate on|off'.
+
+  The Mac must be on and logged in; if it's asleep at the scheduled time the
+  print runs on the next wake. The printer must be powered on to print.
+EOF
+}
+
+# ===========================================================================
+# Subcommand dispatch
+# ===========================================================================
+case "${1:-}" in
+    "")        maybe_autoupdate; ui;;
+    status)    status_text;;
+    update)    run_update;;
+    autoupdate) case "${2:-}" in on) touch "$AUTOUPDATE_FLAG"; echo "Auto-update ON";; off) rm -f "$AUTOUPDATE_FLAG"; echo "Auto-update OFF";; *) autoupdate_on && echo on || echo off;; esac;;
+    on)        agent_on;  echo "Scheduled keep-alive enabled.";;
+    off)       agent_off; echo "Scheduled keep-alive disabled.";;
+    run)       "$WORKER" ${2:+--tier "$2"};;
+    preview)   "$WORKER" --dry ${2:+"$2"};;
+    log)       n="${2:-15}"; [ -s "$HISTORY_FILE" ] && tail -n "$n" "$HISTORY_FILE" | awk -F'\t' '{g=($4<0?"first":"gap "$4"d"); printf "%s  %-7s %-8s x%s  %s\n",$2,$3,g,$5,$6}' || echo "(no history yet)";;
+    notify)    case "${2:-}" in on) rm -f "$NONOTIFY_FLAG"; echo "Notifications ON";; off) touch "$NONOTIFY_FLAG"; echo "Notifications OFF";; *) notify_on && echo on || echo off;; esac;;
+    printer|printers)
+        case "${2:-}" in
+            "")       get_printers;;
+            add)      [ -n "${3:-}" ] && { add_printer "$3"; echo "Added $3 ($(sel_count) selected)"; } || echo "usage: pkeep printer add NAME";;
+            rm|remove) [ -n "${3:-}" ] && { remove_printer "$3"; echo "Removed $3 ($(sel_count) selected)"; } || echo "usage: pkeep printer rm NAME";;
+            clear)    : > "$PRINTER_FILE"; echo "Cleared (will use system default)";;
+            *)        set_only_printer "$2"; echo "Printer set to $2 (replaces the list)";;
+        esac;;
+    interval)  if [ -n "${2:-}" ]; then set_interval_days "$2" && echo "Schedule set to every ${2}d" || echo "Invalid"; else fmt_days "$(get_interval)"; fi;;
+    lead)      if [ -n "${2:-}" ]; then set_lead_secs "$2" && echo "Lead set to ${2}s" || echo "Invalid"; else echo "$(get_lead)s"; fi;;
+    help|-h|--help) show_help;;
+    version|--version) echo "pkeep $VERSION";;
+    *) echo "unknown command: $1" >&2; echo "try: pkeep help" >&2; exit 2;;
+esac
