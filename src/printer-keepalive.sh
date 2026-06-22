@@ -6,12 +6,17 @@
 # idle inkjet's nozzles drying out / clogging, and posts a heads-up notification
 # first so whoever's at the machine knows the printer is about to wake.
 #
-# Inkjet nozzles sit in vertical columns and the carriage sweeps sideways, so a
-# full-HEIGHT line drives every nozzle of its colour. Three intensities:
+# The test strip (all ink channels, C/M/Y/K) runs across the top of the page so
+# the area below stays free — optionally filled with ruled lines so the sheet
+# doubles as note paper (the LINES_FLAG toggle). Three intensities, scaling the
+# strip's ink so a longer idle gap gets a deeper flush:
 #
-#   light   one thin line per channel (C/M/Y/K) — routine, minimal ink
-#   medium  a comb of 3 thin lines per channel — a catch-up flush
-#   heavy   a solid full-height band per channel, printed twice — a deep flush
+#   light   thin colour bars across the top — routine, minimal ink
+#   medium  taller bars — a catch-up flush
+#   heavy   thick bars, printed twice — a deep flush
+#
+# Note: concentrating the strip at the top is great for routine clog PREVENTION;
+# the heavy tier uses taller bars (more vertical travel) for a thorough flush.
 #
 # Intensity is chosen automatically from how long it's been since the last
 # successful print: if the Mac was off/asleep across one or more scheduled runs,

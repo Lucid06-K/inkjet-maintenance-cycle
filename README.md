@@ -1,13 +1,15 @@
 # Printer Keep-Alive
 
 Keeps an idle **inkjet** printer's nozzles from drying out / clogging by
-printing a tiny page on a schedule. Each page fires every ink channel
-(C / M / Y / K) as a **full-height line**, because inkjet nozzles sit in
-vertical columns and the carriage sweeps sideways — so a full-height line
-drives every nozzle of its colour while using a sliver of ink.
+printing a tiny page on a schedule. A compact **test strip** of all ink
+channels (C / M / Y / K) runs across the top of the page, leaving the space
+below free — turn on **lined note paper** to fill it with ruled lines so the
+sheet doubles as notepaper.
 
 Periodic light printing is much cheaper than letting nozzles clog and then
-running the printer's own cleaning cycle (which purges a lot of ink).
+running the printer's own cleaning cycle (which purges a lot of ink). The
+intensity scales with how long it's been idle (see Auto intensity below), so a
+long gap triggers a heavier flush.
 
 ## Install
 
@@ -66,9 +68,9 @@ print, so if the Mac was off/asleep across scheduled runs it catches up:
 
 | Gap since last print | Tier | Page |
 |---|---|---|
-| ≤ 1.5× interval | **light** | 1 thin line per channel (routine) |
-| ≤ 3× interval | **medium** | 3-line comb per channel |
-| > 3× interval | **heavy** | solid band per channel, printed ×2 (deep flush) |
+| ≤ 1.5× interval | **light** | thin colour bars across the top (routine) |
+| ≤ 3× interval | **medium** | taller bars |
+| > 3× interval | **heavy** | thick bars, printed ×2 (deep flush) |
 
 ## Heads-up notification
 
