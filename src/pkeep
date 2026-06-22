@@ -60,7 +60,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.11.0"
+VERSION="1.12.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -82,6 +82,8 @@ Lj8KV3AbURsbzg/soOTa+Qqw8xK7+wPu7Ucj0DI9SuX5AgMBAAE=
 
 R=$'\033[0m'; REV=$'\033[7m'; DIM=$'\033[2m'; GRN=$'\033[32m'; BLD=$'\033[1m'
 TITLE="${BLD}Printer Don't Die Please!!${R}"
+# background colours used ONLY by the page preview (to show the real ink colours)
+CB=$'\033[46m'; MB=$'\033[45m'; YB=$'\033[43m'; KB=$'\033[100m'; REDF=$'\033[31m'
 
 # --- state readers (mirror the worker) -------------------------------------
 trim() { tr -d ' \t\n\r'; }
@@ -364,7 +366,7 @@ _draw_body() {
         printf '  %s\n' "$SEP"
         row 1 "Print keep-alive now   ${DIM}(auto: $(auto_tier))${R}"
         row 2 "Intensive flush now    ${DIM}(heavy, one dense page)${R}"
-        row 3 "Preview (dry run)"
+        row 3 "Preview page"
         row 4 "History / log"
         row 5 "Settings ▸"
         row 6 "Help"
@@ -423,6 +425,65 @@ show_history() {
     [ -s "$LOG" ] && tail -n 6 "$LOG" | sed 's/^/  /' || echo "  (log empty)"
 }
 
+# last cached ink reading for the first selected printer ("combined …" / "separate …")
+ink_cached() {
+    local p cf; p=$(get_printers | head -1); [ -z "$p" ] && return
+    cf="$SCRIPTS/.printer_keepalive.ink.$(printf '%s' "$p" | tr -c 'A-Za-z0-9_-' '_')"
+    [ -r "$cf" ] && cat "$cf"
+}
+
+# a scaled ASCII mock-up of the printed page, reflecting the current settings.
+preview_page() {
+    local W=48 pad="   " style tier ink mode c m y k dash blank i yy
+    style=$(get_notestyle); tier=$(auto_tier); ink=$(ink_cached)
+    # shellcheck disable=SC2086
+    set -- $ink; mode="${1:-}"
+    if [ "$mode" = combined ]; then c="${2:-?}"; m="$c"; y="$c"; k="${3:-?}"
+    elif [ "$mode" = separate ]; then c="${2:-?}"; m="${3:-?}"; y="${4:-?}"; k="${5:-?}"
+    else c="?"; m="?"; y="?"; k="?"; fi
+    dash=$(printf '%*s' "$W" '' | tr ' ' '-')
+    blank=$(printf '%*s' "$W" '')
+
+    printf '\033[2J\033[H'
+    printf '\n  %sPage preview%s  %s· %s flush · note: %s · art: %s%s\n\n' \
+        "$BLD" "$R" "$DIM" "$tier" "$(notepaper_summary)" "$(art_on && echo on || echo off)" "$R"
+    bar() { printf '%s|%s%*s%s|%s\n' "$pad" "$1" "$W" '' "$R" "$2"; }   # colour bar row + right label
+    printf '%s+%s+\n' "$pad" "$dash"
+    printf '%s|%-*s|\n' "$pad" "$W" " PRINTER DON'T DIE PLEASE!!"
+    printf '%s|%-*s|\n' "$pad" "$W" ""
+    bar "$CB" "  C"; bar "$MB" "  M"; bar "$YB" "  Y"; bar "$KB" "  K"   # CMYK strip
+    # ink gauge row
+    if [ "$mode" = combined ]; then
+        printf '%s|%-*s|\n' "$pad" "$W" "$(printf ' ink   Colour %s%%        Black %s%%' "$c" "$k")"
+    else
+        printf '%s|%-*s|\n' "$pad" "$W" "$(printf ' ink   C %s  M %s  Y %s  K %s' "$c" "$m" "$y" "$k")"
+    fi
+    printf '%s|%s|\n' "$pad" "$(printf '%*s' "$W" '' | tr ' ' '=')"   # divider (CMYK gauge line)
+    printf '%s|%-*s|\n' "$pad" "$W" " Notes                            Date __"
+    # note-paper area (8 rows), reflecting style + margin. Builder makes a plain
+    # W-wide row so the box borders always line up.
+    mkrow() { awk -v w="$W" -v mk="$1" -v fl="$2" -v st="$3" 'BEGIN{o="";for(i=0;i<w;i++){ch=((i%st)==0)?mk:fl; o = o ch} print o}'; }
+    local gline gvert drow marg=0
+    gline=$(mkrow "+" "-" 6); gvert=$(mkrow "|" " " 6); drow=$(mkrow "." " " 5)
+    margin_on && marg=$(( $(get_marginmm) * W / 210 ))
+    for i in 1 2 3 4 5 6 7 8; do
+        case "$style" in
+            lines) [ $((i % 2)) -eq 0 ] && yy="$dash"  || yy="$blank";;
+            grid)  [ $((i % 2)) -eq 0 ] && yy="$gline" || yy="$gvert";;
+            dots)  [ $((i % 2)) -eq 0 ] && yy="$drow"  || yy="$blank";;
+            *)     yy="$blank";;
+        esac
+        if [ "$marg" -ge 2 ] && [ "$marg" -lt "$W" ]; then     # overlay margin (keeps width W)
+            yy="${yy:0:$marg}${REDF}|${R}${yy:$((marg+1))}"
+        fi
+        printf '%s|%s|\n' "$pad" "$yy"
+    done
+    printf '%s+%s+\n' "$pad" "$dash"
+    printf '\n  %sp = open the full PDF   ·   any key = back%s' "$DIM" "$R"
+    local key; key=$(read_key)
+    [ "$key" = p ] || [ "$key" = P ] && "$WORKER" --dry >/dev/null 2>&1
+}
+
 cleanup() { stty "$_stty" 2>/dev/null; printf '\033[?25h\033[2J\033[H'; }
 
 ui() {
@@ -473,7 +534,7 @@ ui() {
                         0) if is_loaded; then agent_off; MSG="Scheduled keep-alive disabled"; else agent_on; MSG="Scheduled keep-alive enabled"; fi;;
                         1) run_plain "$WORKER"; MSG="Printed ($(last_phrase))";;
                         2) run_plain "$WORKER" --tier heavy; MSG="Intensive flush sent";;
-                        3) "$WORKER" --dry >/dev/null 2>&1; MSG="Preview opened (no print)";;
+                        3) preview_page; MSG="";;
                         4) run_plain show_history;;
                         5) SCREEN=settings; focus=0; MSG="";;
                         6) run_plain show_help;;
@@ -509,6 +570,10 @@ show_help() {
   squared maths paper, or dots) and the spacing / square size so the sheet
   doubles as note or graph paper. CLI: 'pkeep notepaper off|lines|grid|dots',
   'pkeep notespacing <mm>' (e.g. 5mm squares for maths).
+
+  "Preview page" draws a scaled mock-up of the page right in the terminal —
+  title, CMYK strip, ink gauge and note paper — so you can see your settings
+  before printing; press p there to open the full PDF.
 
   Have more than one printer? Settings ▸ Printers lets you tick several — the
   keep-alive then runs on every selected printer each cycle.
