@@ -56,7 +56,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.7.2"
+VERSION="1.8.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -77,6 +77,10 @@ Lj8KV3AbURsbzg/soOTa+Qqw8xK7+wPu7Ucj0DI9SuX5AgMBAAE=
 -----END PUBLIC KEY-----"
 
 R=$'\033[0m'; REV=$'\033[7m'; DIM=$'\033[2m'; GRN=$'\033[32m'; BLD=$'\033[1m'
+# CMYK-themed accents (on-brand for the colour strip the tool prints)
+CYN=$'\033[36m'; MAG=$'\033[35m'; YEL=$'\033[33m'; REDC=$'\033[31m'
+# title with each word tinted like the C/M/Y/K strip
+TITLE="${BLD}${CYN}Printer ${MAG}Don't ${YEL}Die ${GRN}Please!!${R}"
 
 # --- state readers (mirror the worker) -------------------------------------
 trim() { tr -d ' \t\n\r'; }
@@ -290,12 +294,14 @@ row() {  # row <index> <plain-when-unfocused> ; focused row is reverse-video
 
 _draw_body() {
     local SEP="${DIM}──────────────────────────────────────────────────${R}"
+    # a CMYK-tinted rule for under the title (echoes the printed colour strip)
+    local CSEP="${CYN}────────────${MAG}─────────────${YEL}────────────${GRN}─────────────${R}"
     local agent printer; printer=$(printers_summary)
-    is_loaded && agent="${GRN}● ON${R}" || agent="${DIM}○ OFF${R}"
+    is_loaded && agent="${GRN}● ON${R}" || agent="${REDC}○ OFF${R}"
 
     if [ "$SCREEN" = notepaper ]; then
-        printf '\n  %s %s\n' "${BLD}Printer Don't Die Please!!${R}" "${DIM}· Note paper${R}"
-        printf '  %s\n' "$SEP"
+        printf '\n  %s %s\n' "${TITLE}" "${DIM}· Note paper${R}"
+        printf '  %s\n' "$CSEP"
         row 0 "Style              $(get_notestyle)"
         row 1 "$(printf '%-18s' "$(spacing_label)")$(get_notespacing) mm"
         printf '  %s\n' "$SEP"
@@ -305,8 +311,8 @@ _draw_body() {
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter change · esc back · q quit${R}"
     elif [ "$SCREEN" = printers ]; then
-        printf '\n  %s %s\n' "${BLD}Printer Don't Die Please!!${R}" "${DIM}· Choose printers${R}"
-        printf '  %s\n' "$SEP"
+        printf '\n  %s %s\n' "${TITLE}" "${DIM}· Choose printers${R}"
+        printf '  %s\n' "$CSEP"
         if [ "${#AVAIL[@]}" -eq 0 ]; then
             printf '   %s\n' "${DIM}No printers found. Add one in System Settings ▸ Printers.${R}"
         else
@@ -324,8 +330,8 @@ _draw_body() {
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter toggle · esc/Done back · q quit${R}"
     elif [ "$SCREEN" = settings ]; then
-        printf '\n  %s %s\n' "${BLD}Printer Don't Die Please!!${R}" "${DIM}· Settings${R}"
-        printf '  %s\n' "$SEP"
+        printf '\n  %s %s\n' "${TITLE}" "${DIM}· Settings${R}"
+        printf '  %s\n' "$CSEP"
         local pcount; pcount=$(sel_count)
         local plabel; if [ "$pcount" -eq 0 ]; then plabel="$printer"; else plabel="$pcount selected ($printer)"; fi
         row 0 "Notifications      $(notify_on && echo ON || echo OFF)"
@@ -341,14 +347,14 @@ _draw_body() {
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter select · esc back · q quit${R}"
     else
-        printf '\n  %s  %s\n' "${BLD}Printer Don't Die Please!!${R}" "${DIM}v$VERSION${R}"
-        printf '  %s\n' "$SEP"
+        printf '\n  %s  %s\n' "${TITLE}" "${DIM}v$VERSION${R}"
+        printf '  %s\n' "$CSEP"
         printf '   Agent        %s\n' "$agent"
-        printf '   Printer      %s\n' "$printer"
-        printf '   Schedule     every %s\n' "$(fmt_days "$(get_interval)")"
-        printf '   Last print   %s\n' "$(last_phrase)"
-        printf '   Next (est)   %s\n' "$(next_phrase)"
-        printf '   Notifications %s\n' "$(notify_on && echo on || echo off)"
+        printf '   Printer      %s%s%s\n' "$CYN" "$printer" "$R"
+        printf '   Schedule     %severy %s%s\n' "$YEL" "$(fmt_days "$(get_interval)")" "$R"
+        printf '   Last print   %s%s%s\n' "$MAG" "$(last_phrase)" "$R"
+        printf '   Next (est)   %s%s%s\n' "$DIM" "$(next_phrase)" "$R"
+        printf '   Notifications %s\n' "$(notify_on && echo "${GRN}on${R}" || echo "${DIM}off${R}")"
         printf '  %s\n' "$SEP"
         row 0 "$(is_loaded && echo 'Disable scheduled keep-alive' || echo 'Enable scheduled keep-alive')"
         printf '  %s\n' "$SEP"
