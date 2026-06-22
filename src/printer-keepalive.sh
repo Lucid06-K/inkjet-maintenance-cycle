@@ -195,6 +195,9 @@ if style != "off":
     notes_top = rule_y - 30
     GK = 0.14                     # rule/dot grey (CMYK K)
     ops.append(text(ML, notes_top + 12, 7, 0.32, "Notes", font="F2"))
+    # a place to write the date, top-right of the note area
+    ops.append(text(RIGHT - 100, notes_top + 12, 7, 0.32, "Date", font="F2"))
+    ops.append(line(RIGHT - 78, notes_top + 10, RIGHT, notes_top + 10, 0.5, 0, 0, 0, 0.30))
     # horizontal rules (lines + grid)
     if style in ("lines", "grid"):
         yy = notes_top
@@ -223,8 +226,10 @@ if style != "off":
                 xx += spacing
             yy -= spacing
 
-# subtle footer so the page is identifiable even after it's written on
-ops.append(text(ML, 40, 6.5, 0.35, "Printer Keep-Alive  ·  inkjet nozzle maintenance"))
+# subtle footer to identify the page — only on a blank page, so it stays out of
+# the way when the sheet is being used as note paper
+if style == "off":
+    ops.append(text(ML, 40, 6.5, 0.35, "Printer Keep-Alive  ·  inkjet nozzle maintenance"))
 
 content = ("\n".join(ops) + "\n").encode("latin-1")
 
