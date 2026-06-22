@@ -239,7 +239,9 @@ RIGHT = W - MR
 inks = [(1, 0, 0, 0, "C"), (0, 1, 0, 0, "M"), (0, 0, 1, 0, "Y"), (0, 0, 0, 1, "K")]
 
 # per-tier strip geometry: bar height + gap. Heavier = more ink (deeper flush).
-BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (40, 8)}[tier]
+# The strip is half-width (right side), so heavy uses much taller bars to keep
+# the deep-flush tier ink-heavy despite the narrower column.
+BH, GAP = {"light": (8, 6), "medium": (14, 6), "heavy": (44, 8)}[tier]
 
 # the page content is encoded latin-1, so fold common smart punctuation to ASCII
 # (macOS computer names default to a curly apostrophe) and replace anything else
@@ -290,39 +292,33 @@ def art_block(lines, x_left, y_top, size, lead):
         ops.append(mono(x_left, y_top - j * lead, size, c, m, ye, k, ln))
 
 ops = []
-# header: title (bold, tracked) + subtitle (muted)
-ops.append(text(ML, 802, 13, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.6))
-sub = subtitle.strip()
-sub = (sub + "  -  " if sub else "") + f"{tier} flush"
-ops.append(text(ML, 788, 8, 0.45, sub))
-# rotating ASCII art, tucked into the top-right corner (right-justified block so
-# it stays clear of the subtitle on the left). Each line is C/M/Y/K in turn.
-if 0 <= art_idx < len(ART):
-    a = ART[art_idx]
-    asz, alead = 6.5, 7.5
-    aw = max(len(l) for l in a) * asz * 0.6        # Courier glyphs are 0.6em wide
-    art_block(a, RIGHT - aw, 806, asz, alead)      # right edge aligned to the strip's end
-# ink: "combined <colour> <k>" or "separate <c> <m> <y> <k>" — drawn on the divider.
 ink_tok = ink.split() if ink else []
 ink_mode = ink_tok[0] if ink_tok else ""
 
-# colour strip across the short side, just below the header
-y = 768
+# ===== top band: a HALF-WIDTH colour strip on the right, header on the left =====
+# The strip runs from the page middle to the right edge, so it uses ~half the ink
+# of a full-width strip yet still fires every nozzle (the head sweeps the same
+# columns regardless of width). Halving it frees the left half for the title/info,
+# which lets the note paper below start higher. Heavy keeps this layout but with
+# much taller bars so the deep-flush tier still pushes plenty of ink.
+strip_left = W / 2.0
+strip_w = RIGHT - strip_left
+
+y = 800
 strip_bottom = y
 for c, m, ye, k, label in inks:
-    ops.append(rect(ML, y - BH, CW, BH, c, m, ye, k))
+    ops.append(rect(strip_left, y - BH, strip_w, BH, c, m, ye, k))
     ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, label))  # tiny label in the right margin
     strip_bottom = y - BH
     y = strip_bottom - GAP
 
-# divider between the test strip and the space below: one rule split into four
-# equal C/M/Y/K quarters, doubling as the ink gauge. The level(s) print above it —
-# a single "Colour" reading spanning C/M/Y for a combined tri-colour cartridge,
-# otherwise one reading per channel.
+# divider below the strip: one rule split into four equal C/M/Y/K quarters,
+# doubling as the ink gauge. The level(s) print above it — a single "Colour"
+# reading spanning C/M/Y for a combined tri-colour cartridge, else one per channel.
 rule_y = strip_bottom - 16
-qw = CW / 4.0
+qw = strip_w / 4.0
 for i, (c, m, ye, k) in enumerate([(1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0,1)]):
-    ops.append(line(ML + i*qw, rule_y, ML + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
+    ops.append(line(strip_left + i*qw, rule_y, strip_left + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
 
 def gauge(xc, lvl, lbl=""):
     if lvl in ("", "-"): return
@@ -330,20 +326,40 @@ def gauge(xc, lvl, lbl=""):
 
 if ink_mode == "combined":
     # one label centred over the C/M/Y span (first three quarters), one over K.
-    gauge(ML + 1.5 * qw, ink_tok[1] if len(ink_tok) > 1 else "-", "Colour")
-    gauge(ML + 3.5 * qw, ink_tok[2] if len(ink_tok) > 2 else "-", "Black")
+    gauge(strip_left + 1.5 * qw, ink_tok[1] if len(ink_tok) > 1 else "-", "Colour")
+    gauge(strip_left + 3.5 * qw, ink_tok[2] if len(ink_tok) > 2 else "-", "Black")
     # a thin brace under the C/M/Y quarters to show they share one cartridge
     by = rule_y - 5
-    ops.append(line(ML + 4, by, ML + 3 * qw - 4, by, 0.5, 0, 0, 0, 0.30))
-    ops.append(line(ML + 4, by, ML + 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
-    ops.append(line(ML + 3 * qw - 4, by, ML + 3 * qw - 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(strip_left + 4, by, strip_left + 3 * qw - 4, by, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(strip_left + 4, by, strip_left + 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(strip_left + 3 * qw - 4, by, strip_left + 3 * qw - 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
 elif ink_mode == "separate":
-    vals = ink_tok[1:5]
-    for i, v in enumerate(vals):
-        gauge(ML + (i + 0.5) * qw, v)
+    for i, v in enumerate(ink_tok[1:5]):
+        gauge(strip_left + (i + 0.5) * qw, v)
 
 if ink_mode in ("combined", "separate"):
     ops.append(text(RIGHT + 6, rule_y - 2, 6, 0.45, "INK LEVELS"))
+
+# header in the freed left half: title (bold, tracked), wrapped info, project link
+# and the rotating ASCII art, stacked top→down and kept clear of the strip/notes.
+ops.append(text(ML, 792, 12, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.2))
+maxw = strip_left - ML - 10        # left-column width, minus a gutter before the strip
+parts = [p.strip() for p in subtitle.split("·") if p.strip()]
+parts.insert(1, f"{tier} flush") if parts else parts.append(f"{tier} flush")
+ilines, cur = [], ""
+for p in parts:
+    cand = (cur + "  ·  " + p) if cur else p
+    if not cur or len(cand) * 7.5 * 0.5 <= maxw:
+        cur = cand
+    else:
+        ilines.append(cur); cur = p
+if cur: ilines.append(cur)
+iy = 776
+for ln in ilines[:2]:
+    ops.append(text(ML, iy, 7.5, 0.45, ln)); iy -= 10
+ops.append(text(ML, 756, 6.5, 0.5, "github.com/Lucid06-K/printer-keepalive"))
+if 0 <= art_idx < len(ART):
+    art_block(ART[art_idx], ML, 750, 5.5, 6.5)
 
 # note paper below (optional): lines / grid / dots, edge to edge, down to the
 # bottom of the page (the printer's own unprintable margin trims the extremes).

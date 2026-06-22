@@ -61,7 +61,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.14.3"
+VERSION="1.15.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -494,18 +494,21 @@ preview_page() {
     printf '\033[2J\033[H'
     printf '\n  %sPage preview%s  %s· %s flush · note: %s · art: %s%s\n\n' \
         "$BLD" "$R" "$DIM" "$tier" "$(notepaper_summary)" "$(art_summary)" "$R"
-    bar() { printf '%s|%s%*s%s|%s\n' "$pad" "$1" "$W" '' "$R" "$2"; }   # colour bar row + right label
+    # top band: HALF-width strip on the right, header text on the left
+    local LH=22 RH=$(( W - 22 ))
+    hrow() { printf '%s|%-*.*s%s%*s%s|%s\n' "$pad" "$LH" "$LH" " $1" "$2" "$RH" '' "$R" "$3"; }
     printf '%s+%s+\n' "$pad" "$dash"
-    printf '%s|%-*s|\n' "$pad" "$W" " PRINTER DON'T DIE PLEASE!!"
-    printf '%s|%-*s|\n' "$pad" "$W" ""
-    bar "$CB" "  C"; bar "$MB" "  M"; bar "$YB" "  Y"; bar "$KB" "  K"   # CMYK strip
-    # ink gauge row
+    hrow "PRINTER DON'T DIE PLEASE!!" "$CB" "  C"
+    hrow "$tier flush"                "$MB" "  M"
+    hrow "github.com/Lucid06-K"       "$YB" "  Y"
+    hrow "$(art_on && echo "art: $(art_mode)" || echo '')" "$KB" "  K"
+    # ink gauge sits on the divider, under the RIGHT half only
     if [ "$mode" = combined ]; then
-        printf '%s|%-*s|\n' "$pad" "$W" "$(printf ' ink   Colour %s%%        Black %s%%' "$c" "$k")"
+        printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' Colour %s%%  Black %s%%' "$c" "$k")" " INK LEVELS"
     else
-        printf '%s|%-*s|\n' "$pad" "$W" "$(printf ' ink   C %s  M %s  Y %s  K %s' "$c" "$m" "$y" "$k")"
+        printf '%s|%*s%-*.*s|%s\n' "$pad" "$LH" '' "$RH" "$RH" "$(printf ' C%s M%s Y%s K%s' "$c" "$m" "$y" "$k")" " INK LEVELS"
     fi
-    printf '%s|%s|\n' "$pad" "$(printf '%*s' "$W" '' | tr ' ' '=')"   # divider (CMYK gauge line)
+    printf '%s|%*s%s|\n' "$pad" "$LH" '' "$(printf '%*s' "$RH" '' | tr ' ' '=')"   # divider under right half
     printf '%s|%-*s|\n' "$pad" "$W" " Notes                            Date __"
     # note-paper area (8 rows), reflecting style + margin. Builder makes a plain
     # W-wide row so the box borders always line up.
