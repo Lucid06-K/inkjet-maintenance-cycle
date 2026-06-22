@@ -20,6 +20,8 @@
 #   pkeep lead [secs]       show / set the heads-up lead time
 #   pkeep notepaper STYLE   note paper below the strip: off|lines|grid|dots
 #   pkeep notespacing MM    rule/grid spacing in millimetres (4-30)
+#   pkeep art on|off        rotating CMYK ASCII art in the top-right corner
+#   pkeep artsheet          print a gallery of all 15 art pieces
 #   pkeep update            fetch + verify + install the latest version
 #   pkeep autoupdate on|off opt-in daily auto-update
 #
@@ -41,6 +43,7 @@ NONOTIFY_FLAG="$SCRIPTS/printer_keepalive.nonotify"
 LINES_FLAG="$SCRIPTS/printer_keepalive.lines"
 NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle"
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"
+ARTFLAG="$SCRIPTS/printer_keepalive.art"
 LASTPRINT_FILE="$SCRIPTS/printer_keepalive.lastprint"
 HISTORY_FILE="$SCRIPTS/printer_keepalive.history"
 
@@ -53,7 +56,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.6.1"
+VERSION="1.7.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -88,6 +91,7 @@ get_notestyle() {
 }
 get_notespacing() { local v=""; [ -r "$NOTESPACING_FILE" ] && v=$(trim < "$NOTESPACING_FILE"); case "$v" in ''|*[!0-9]*) echo 8;; *) echo "$v";; esac; }
 lines_on()   { [ "$(get_notestyle)" != off ]; }
+art_on()     { [ -e "$ARTFLAG" ]; }
 set_notestyle()   { case "$1" in off|lines|grid|dots) printf '%s\n' "$1" > "$NOTESTYLE_FILE"; rm -f "$LINES_FLAG";; *) return 1;; esac; }
 cycle_notestyle() { case "$(get_notestyle)" in off) set_notestyle lines;; lines) set_notestyle grid;; grid) set_notestyle dots;; *) set_notestyle off;; esac; }
 set_notespacing() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -lt 4 ] && return 1; [ "$1" -gt 30 ] && return 1; printf '%s\n' "$1" > "$NOTESPACING_FILE"; }
@@ -185,6 +189,7 @@ status_text() {
     notify_on && echo "Notifications: on" || echo "Notifications: off"
     echo "Heads-up lead: $(get_lead)s"
     echo "Note paper:    $(notepaper_summary)"
+    art_on && echo "ASCII art:     on (rotates each print)" || echo "ASCII art:     off"
     autoupdate_on && echo "Auto-update:   on (daily, verified)" || echo "Auto-update:   off (manual: pkeep update)"
     echo "Version:       $VERSION"
 }
@@ -267,7 +272,7 @@ maybe_autoupdate() {
 # ===========================================================================
 SCREEN=main; focus=0; MSG=""
 MAIN_MAX=8      # selectable indices 0..8
-SET_MAX=6       # 0..6
+SET_MAX=7       # 0..7
 AVAIL=()        # available printers, populated when the chooser opens
 
 _paint() {
@@ -328,9 +333,10 @@ _draw_body() {
         row 2 "Schedule           every $(fmt_days "$(get_interval)")"
         row 3 "Heads-up lead      $(get_lead)s"
         row 4 "Note paper ▸       $(notepaper_summary)"
-        row 5 "Auto-update        $(autoupdate_on && echo ON || echo OFF)"
+        row 5 "ASCII art          $(art_on && echo 'ON (rotates)' || echo OFF)"
+        row 6 "Auto-update        $(autoupdate_on && echo ON || echo OFF)"
         printf '  %s\n' "$SEP"
-        row 6 "← Back to menu"
+        row 7 "← Back to menu"
         printf '  %s\n' "$SEP"
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter select · esc back · q quit${R}"
@@ -446,8 +452,9 @@ ui() {
                         2) local d; d=$(prompt_line "Schedule interval in days (now $(fmt_days "$(get_interval)")): "); set_interval_days "$d" && MSG="Schedule set to every ${d}d" || MSG="Unchanged";;
                         3) local s; s=$(prompt_line "Heads-up lead in seconds (now $(get_lead)s): "); set_lead_secs "$s" && MSG="Lead set to ${s}s" || MSG="Unchanged";;
                         4) SCREEN=notepaper; focus=0; MSG="";;
-                        5) if autoupdate_on; then rm -f "$AUTOUPDATE_FLAG"; MSG="Auto-update OFF"; else touch "$AUTOUPDATE_FLAG"; MSG="Auto-update ON (checks daily)"; fi;;
-                        6) SCREEN=main; focus=0; MSG="";;
+                        5) if art_on; then rm -f "$ARTFLAG"; MSG="ASCII art OFF"; else touch "$ARTFLAG"; MSG="ASCII art ON (rotates each print)"; fi;;
+                        6) if autoupdate_on; then rm -f "$AUTOUPDATE_FLAG"; MSG="Auto-update OFF"; else touch "$AUTOUPDATE_FLAG"; MSG="Auto-update ON (checks daily)"; fi;;
+                        7) SCREEN=main; focus=0; MSG="";;
                     esac
                 else
                     case "$focus" in
@@ -494,6 +501,10 @@ show_help() {
   Have more than one printer? Settings ▸ Printers lets you tick several — the
   keep-alive then runs on every selected printer each cycle.
 
+  ASCII art (Settings ▸ ASCII art, off by default): tucks one of 15 tiny art
+  pieces into the top-right corner, rotating each print, every line in C/M/Y/K.
+  'pkeep art on|off' to toggle; 'pkeep artsheet' prints a gallery of all 15.
+
   Updates: "Check for updates" installs the latest verified version (signed +
   checksummed). Turn on Settings ▸ Auto-update for a daily check. CLI:
   'pkeep update', 'pkeep autoupdate on|off'.
@@ -530,6 +541,8 @@ case "${1:-}" in
     lines)     case "${2:-}" in on) set_notestyle lines; echo "Note paper: lines";; off) set_notestyle off; echo "Note paper: off";; *) lines_on && echo on || echo off;; esac;;
     notepaper) if [ -n "${2:-}" ]; then set_notestyle "$2" && echo "Note paper: $2" || echo "Invalid (off|lines|grid|dots)"; else get_notestyle; fi;;
     notespacing) if [ -n "${2:-}" ]; then set_notespacing "$2" && echo "Spacing set to ${2}mm" || echo "Invalid (4-30 mm)"; else echo "$(get_notespacing)mm"; fi;;
+    art)       case "${2:-}" in on) touch "$ARTFLAG"; echo "ASCII art ON";; off) rm -f "$ARTFLAG"; echo "ASCII art OFF";; *) art_on && echo on || echo off;; esac;;
+    artsheet)  "$WORKER" --art-sheet;;
     help|-h|--help) show_help;;
     version|--version) echo "pkeep $VERSION";;
     *) echo "unknown command: $1" >&2; echo "try: pkeep help" >&2; exit 2;;

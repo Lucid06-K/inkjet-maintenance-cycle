@@ -38,6 +38,9 @@ NONOTIFY_FLAG="$SCRIPTS/printer_keepalive.nonotify"   # presence = notifications
 LINES_FLAG="$SCRIPTS/printer_keepalive.lines"         # legacy on/off flag (pre-style)
 NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle" # off | lines | grid | dots
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"  # rule spacing in mm
+ARTFLAG="$SCRIPTS/printer_keepalive.art"              # presence = rotating ASCII art ON (default off)
+ARTINDEX_FILE="$SCRIPTS/.printer_keepalive.artindex"  # which art to show next
+ART_COUNT=15                                          # must match the ART list in the generator
 LASTPRINT_FILE="$SCRIPTS/printer_keepalive.lastprint" # epoch of last good print
 HISTORY_FILE="$SCRIPTS/printer_keepalive.history"     # TSV: epoch ISO tier days copies printer job
 LOG="$HOME/Library/Logs/printer-keepalive.log"
@@ -83,6 +86,9 @@ get_notespacing() {   # rule spacing in mm (default 8)
     case "$v" in ''|*[!0-9]*) echo 8 ;; *) echo "$v" ;; esac
 }
 lines_on()  { [ "$(get_notestyle)" != off ]; }
+art_on()    { [ -e "$ARTFLAG" ]; }
+get_artindex() { local v=""; [ -r "$ARTINDEX_FILE" ] && v=$(trim < "$ARTINDEX_FILE"); case "$v" in ''|*[!0-9]*) echo 0;; *) echo "$v";; esac; }
+set_artindex() { printf '%s\n' "$1" > "$ARTINDEX_FILE" 2>/dev/null || true; }
 
 # post a notification via the applet (env-var payload, dsort's playbook). Silent
 # if muted or the applet isn't installed yet.
@@ -178,16 +184,18 @@ IPPEOF
 }
 
 # --- build the keep-alive PDF for a given tier -----------------------------
-# build_pdf <tier> <subtitle> [ink]  -> echoes the temp PDF path
+# build_pdf <tier> <subtitle> [ink] [art_idx] [mode]  -> echoes the temp PDF path
 # The test strip (all ink channels) runs across the top of the page so the area
 # below is free; with ruled-paper mode on, that area becomes lined note paper.
+# art_idx >= 0 draws that rotating ASCII art top-right; mode "sheet" renders a
+# contact sheet of all the art instead of a keep-alive page.
 build_pdf() {
-    local tier="$1" subtitle="$2" ink="${3:-}" pdf stub style sp_mm sp_pts
+    local tier="$1" subtitle="$2" ink="${3:-}" art_idx="${4:--1}" mode="${5:-page}" pdf stub style sp_mm sp_pts
     stub="$(mktemp -t pkeepalive)"; pdf="${stub}.pdf"; mv "$stub" "$pdf"
     [ -z "$PYTHON" ] && { rm -f "$pdf"; echo "ERROR: python3 not found" >&2; return 1; }
     style=$(get_notestyle); sp_mm=$(get_notespacing)
     sp_pts=$(awk "BEGIN{printf \"%.2f\", $sp_mm * 72 / 25.4}")   # mm -> points
-    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" <<'PY'
+    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" "$art_idx" "$mode" <<'PY'
 import sys
 out  = sys.argv[1]
 tier = sys.argv[2] if len(sys.argv) > 2 else "light"
@@ -196,6 +204,9 @@ try: spacing = float(sys.argv[4])
 except (IndexError, ValueError): spacing = 22.7
 subtitle = sys.argv[5] if len(sys.argv) > 5 else ""
 ink = sys.argv[6] if len(sys.argv) > 6 else ""
+try: art_idx = int(sys.argv[7])
+except (IndexError, ValueError): art_idx = -1
+mode = sys.argv[8] if len(sys.argv) > 8 else "page"
 if tier not in ("light", "medium", "heavy"): tier = "light"
 if style not in ("lines", "grid", "dots"): style = "off"
 if spacing < 8: spacing = 8        # sane floor so we never emit thousands of rules
@@ -229,6 +240,35 @@ def rect(x, y, w, h, c, m, ye, k):
     return f"{c} {m} {ye} {k} k {x:.1f} {y:.1f} {w:.1f} {h:.1f} re f"
 def line(x1, y1, x2, y2, w, c, m, ye, k):
     return f"{c} {m} {ye} {k} K {w} w {x1:.1f} {y1:.1f} m {x2:.1f} {y2:.1f} l S"
+def mono(x, y, size, c, m, ye, k, s):    # monospace line in Courier (F3), CMYK fill
+    return (f"BT /F3 {size} Tf {c} {m} {ye} {k} k "
+            f"{x:.1f} {y:.1f} Td ({esc(s)}) Tj ET")
+
+# 15 tiny ASCII-art pieces shown top-right and rotated each print. Each LINE is
+# coloured C/M/Y/K in turn. Kept narrow so they tuck into the corner.
+CMYK = [(1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)]
+ART = [
+    [" .", "/o\\", "\\_/"],                                  # 1 ink drop
+    [" ____", "|** |", "|____|", " |__| "],                 # 2 printer
+    ["/\\_/\\", "( o.o )", " > ^ < "],                       # 3 cat
+    ["_   _", "\\\\ //", " \\V/ "],                           # 4 heart
+    ["\\ | /", "- * -", "/ | \\"],                            # 5 star
+    [".---.", "|o o|", "| ` |", "'---'"],                    # 6 smiley
+    [".===.", "|o o|", "|[_]|", "/   \\"],                    # 7 robot
+    ["( ~ )", ".---.", "|   |D", "'---'"],                   # 8 coffee
+    ["\\ | /", "-( )-", "/ | \\"],                            # 9 sun
+    ["  /\\", " |oo|", " |==|", " /||\\", "  ^^"],            # 10 rocket
+    ["  o", " o", ">(((^>"],                                 # 11 fish
+    [" (@) ", "\\ | /", "  |  "],                             # 12 flower
+    [".----.", "| EE |", "| EE |", "'----'"],                # 13 page
+    ["  _", " | |__", " |    |", " |____|"],                  # 14 thumbs up
+    ["+  .", " .* ", ".  +", " *. "],                         # 15 sparkles
+]
+
+def art_block(lines, x_left, y_top, size, lead):
+    for j, ln in enumerate(lines):
+        c, m, ye, k = CMYK[j % 4]
+        ops.append(mono(x_left, y_top - j * lead, size, c, m, ye, k, ln))
 
 ops = []
 # header: title (bold, tracked) + subtitle (muted)
@@ -236,6 +276,13 @@ ops.append(text(ML, 802, 13, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1
 sub = subtitle.strip()
 sub = (sub + "  -  " if sub else "") + f"{tier} flush"
 ops.append(text(ML, 788, 8, 0.45, sub))
+# rotating ASCII art, tucked into the top-right corner (right-justified block so
+# it stays clear of the subtitle on the left). Each line is C/M/Y/K in turn.
+if 0 <= art_idx < len(ART):
+    a = ART[art_idx]
+    asz, alead = 6.5, 7.5
+    aw = max(len(l) for l in a) * asz * 0.6        # Courier glyphs are 0.6em wide
+    art_block(a, (W - 8) - aw, 806, asz, alead)
 # ink: "combined <colour> <k>" or "separate <c> <m> <y> <k>" — drawn on the divider.
 ink_tok = ink.split() if ink else []
 ink_mode = ink_tok[0] if ink_tok else ""
@@ -322,16 +369,36 @@ if style != "off":
 if style == "off":
     ops.append(text(ML, 40, 6.5, 0.35, "Printer Don't Die Please!!  ·  inkjet nozzle maintenance"))
 
+# contact sheet: discard the keep-alive page and lay out all the art in a grid
+if mode == "sheet":
+    ops = []
+    ops.append(text(ML, 800, 14, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1.4))
+    ops.append(text(ML, 784, 8.5, 0.45, "ASCII art gallery - one of these rotates onto the top-right corner of each print"))
+    cols, rows = 3, 5
+    cellw = CW / cols
+    top, bot = 760, 60
+    rowh = (top - bot) / rows
+    for idx, a in enumerate(ART):
+        col, row = idx % cols, idx // cols
+        cx = ML + col * cellw
+        cy = top - row * rowh
+        ops.append(text(cx, cy, 8, 0.55, "#%d" % (idx + 1), font="F2"))
+        sz, lead = 9, 10.5
+        aw = max(len(l) for l in a) * sz * 0.6
+        ah = len(a) * lead
+        art_block(a, cx + (cellw - 24 - aw) / 2 + 6, cy - 18, sz, lead)
+
 content = ("\n".join(ops) + "\n").encode("latin-1")
 
 objs = [
     b"<< /Type /Catalog /Pages 2 0 R >>",
     b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {W} {H}] "
-     f"/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>").encode("latin-1"),
+     f"/Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >> /Contents 4 0 R >>").encode("latin-1"),
     b"<< /Length %d >>\nstream\n" % len(content) + content + b"endstream",
     b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>",
 ]
 buf = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
 offs = []
@@ -348,13 +415,26 @@ PY
 
 # --- main ------------------------------------------------------------------
 mkdir -p "$SCRIPTS" "$(dirname "$LOG")"
-FORCE_TIER=""; DRY=0
+FORCE_TIER=""; DRY=0; ARTSHEET=0
 case "${1:-}" in
-    --dry)  DRY=1; FORCE_TIER="${2:-}";;
-    --tier) FORCE_TIER="${2:-}";;
-    "")     ;;
-    *)      echo "usage: $(basename "$0") [--tier light|medium|heavy] [--dry [tier]]" >&2; exit 2;;
+    --dry)       DRY=1; FORCE_TIER="${2:-}";;
+    --tier)      FORCE_TIER="${2:-}";;
+    --art-sheet) ARTSHEET=1;;
+    "")          ;;
+    *)           echo "usage: $(basename "$0") [--tier light|medium|heavy] [--dry [tier]] [--art-sheet]" >&2; exit 2;;
 esac
+
+# --- ASCII-art contact sheet: print all the art on one page, then exit -------
+if [ "$ARTSHEET" = 1 ]; then
+    PRINTERS=()
+    while IFS= read -r _p; do [ -n "$_p" ] && PRINTERS+=("$_p"); done < <(get_printers)
+    [ "${#PRINTERS[@]}" -eq 0 ] && { echo "no printer configured" >&2; exit 1; }
+    TS="$(date '+%Y-%m-%d %H:%M:%S')"
+    PDF=$(build_pdf "light" "" "" -1 sheet)
+    for P in "${PRINTERS[@]}"; do lp -d "$P" -o media=A4 "$PDF" >/dev/null 2>>"$LOG" || true; done
+    echo "[$TS] printed ASCII-art contact sheet to ${#PRINTERS[@]} printer(s)" | tee -a "$LOG"
+    rm -f "$PDF"; exit 0
+fi
 
 TIER="${FORCE_TIER:-$(decide_tier)}"
 case "$TIER" in light|medium|heavy) ;; *) TIER=$(decide_tier);; esac
@@ -378,8 +458,11 @@ case "$TIER" in
 esac
 
 # --- dry run: build + open, no printing, no state change -------------------
+# which ASCII art to show (rotates each print); -1 = art off. Dry run previews
+# the current art without advancing the rotation.
+ADRY=-1; art_on && ADRY=$(( $(get_artindex) % ART_COUNT ))
 if [ "$DRY" = 1 ]; then
-    PDF=$(build_pdf "$TIER" "$TS  ·  $since  ·  $HOST  ·  dry run" "$(ink_report "${PRINTERS[0]:-}")")
+    PDF=$(build_pdf "$TIER" "$TS  ·  $since  ·  $HOST  ·  dry run" "$(ink_report "${PRINTERS[0]:-}")" "$ADRY" page)
     echo "[$TS] dry run ($TIER) - $PDF" | tee -a "$LOG"
     open "$PDF" 2>/dev/null || true
     exit 0
@@ -396,11 +479,12 @@ notify "Printer Don't Die Please!!" "$body"
 LEAD=$(get_lead); [ "$LEAD" -gt 0 ] && sleep "$LEAD"
 
 COPIES=1; [ "$TIER" = heavy ] && COPIES=2
-NOW=$(date +%s); OK=0; FAILED=""
+NOW=$(date +%s); OK=0; FAILED=""; ACUR=$ADRY    # ACUR<0 => art off
 
 # print to every selected printer; one history row per printer
 for P in "${PRINTERS[@]}"; do
-    PDF=$(build_pdf "$TIER" "$TS  ·  $since  ·  $HOST  ·  $P" "$(ink_report "$P")")
+    aidx=-1; [ "$ACUR" -ge 0 ] && aidx=$(( ACUR % ART_COUNT ))
+    PDF=$(build_pdf "$TIER" "$TS  ·  $since  ·  $HOST  ·  $P" "$(ink_report "$P")" "$aidx" page)
     if lp -d "$P" -n "$COPIES" -o media=A4 "$PDF" >/dev/null 2>>"$LOG"; then
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$NOW" "$TS" "$TIER" "$DAYS" "$COPIES" "$P" >> "$HISTORY_FILE"
         OK=$((OK+1))
@@ -412,7 +496,9 @@ for P in "${PRINTERS[@]}"; do
         FAILED="$FAILED $P"
     fi
     rm -f "$PDF"
+    [ "$ACUR" -ge 0 ] && ACUR=$(( ACUR + 1 ))
 done
+[ "$ACUR" -ge 0 ] && set_artindex $(( ACUR % ART_COUNT ))   # save next art for the next run
 
 [ "$OK" -gt 0 ] && echo "$NOW" > "$LASTPRINT_FILE"
 if [ "$DAYS" -lt 0 ]; then gapmsg="first run"; else gapmsg="gap was ${DAYS}d"; fi
