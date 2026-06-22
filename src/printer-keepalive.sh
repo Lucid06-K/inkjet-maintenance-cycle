@@ -38,6 +38,8 @@ NONOTIFY_FLAG="$SCRIPTS/printer_keepalive.nonotify"   # presence = notifications
 LINES_FLAG="$SCRIPTS/printer_keepalive.lines"         # legacy on/off flag (pre-style)
 NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle" # off | lines | grid | dots
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"  # rule spacing in mm
+MARGIN_FLAG="$SCRIPTS/printer_keepalive.margin"       # presence = workbook left margin line ON (default off)
+MARGINMM_FILE="$SCRIPTS/printer_keepalive.marginmm"   # margin distance from the left edge, mm
 ARTFLAG="$SCRIPTS/printer_keepalive.art"              # presence = rotating ASCII art ON (default off)
 ARTINDEX_FILE="$SCRIPTS/.printer_keepalive.artindex"  # which art to show next
 ART_COUNT=15                                          # must match the ART list in the generator
@@ -86,6 +88,11 @@ get_notespacing() {   # rule spacing in mm (default 8)
     case "$v" in ''|*[!0-9]*) echo 8 ;; *) echo "$v" ;; esac
 }
 lines_on()  { [ "$(get_notestyle)" != off ]; }
+margin_on() { [ -e "$MARGIN_FLAG" ]; }    # school-workbook left margin line
+get_marginmm() {   # distance of the margin line from the left edge, mm (default 25)
+    local v=""; [ -r "$MARGINMM_FILE" ] && v=$(trim < "$MARGINMM_FILE")
+    case "$v" in ''|*[!0-9]*) echo 25 ;; *) echo "$v" ;; esac
+}
 art_on()    { [ -e "$ARTFLAG" ]; }
 get_artindex() { local v=""; [ -r "$ARTINDEX_FILE" ] && v=$(trim < "$ARTINDEX_FILE"); case "$v" in ''|*[!0-9]*) echo 0;; *) echo "$v";; esac; }
 set_artindex() { printf '%s\n' "$1" > "$ARTINDEX_FILE" 2>/dev/null || true; }
@@ -193,9 +200,12 @@ build_pdf() {
     local tier="$1" subtitle="$2" ink="${3:-}" art_idx="${4:--1}" mode="${5:-page}" pdf stub style sp_mm sp_pts
     stub="$(mktemp -t pkeepalive)"; pdf="${stub}.pdf"; mv "$stub" "$pdf"
     [ -z "$PYTHON" ] && { rm -f "$pdf"; echo "ERROR: python3 not found" >&2; return 1; }
+    local mg mg_pts
     style=$(get_notestyle); sp_mm=$(get_notespacing)
     sp_pts=$(awk "BEGIN{printf \"%.2f\", $sp_mm * 72 / 25.4}")   # mm -> points
-    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" "$art_idx" "$mode" <<'PY'
+    mg=$(margin_on && echo 1 || echo 0)
+    mg_pts=$(awk "BEGIN{printf \"%.2f\", $(get_marginmm) * 72 / 25.4}")
+    "$PYTHON" - "$pdf" "$tier" "$style" "$sp_pts" "$subtitle" "$ink" "$art_idx" "$mode" "$mg" "$mg_pts" <<'PY'
 import sys
 out  = sys.argv[1]
 tier = sys.argv[2] if len(sys.argv) > 2 else "light"
@@ -207,6 +217,9 @@ ink = sys.argv[6] if len(sys.argv) > 6 else ""
 try: art_idx = int(sys.argv[7])
 except (IndexError, ValueError): art_idx = -1
 mode = sys.argv[8] if len(sys.argv) > 8 else "page"
+margin_on = (len(sys.argv) > 9 and sys.argv[9] == "1")
+try: margin_x = float(sys.argv[10])
+except (IndexError, ValueError): margin_x = 71.0
 if tier not in ("light", "medium", "heavy"): tier = "light"
 if style not in ("lines", "grid", "dots"): style = "off"
 if spacing < 8: spacing = 8        # sane floor so we never emit thousands of rules
@@ -363,6 +376,9 @@ if style != "off":
                     ops.append(rect(xx - 0.6, yy - 0.6, 1.2, 1.2, 0, 0, 0, 0.45))
                 xx += spacing
             yy -= spacing
+    # optional school-workbook left margin line, a set distance from the edge
+    if margin_on and 0 < margin_x < W:
+        ops.append(line(margin_x, notes_top + 6, margin_x, BM, 0.8, 0, 0.6, 0.5, 0))
 
 # subtle footer to identify the page — only on a blank page, so it stays out of
 # the way when the sheet is being used as note paper

@@ -20,6 +20,8 @@
 #   pkeep lead [secs]       show / set the heads-up lead time
 #   pkeep notepaper STYLE   note paper below the strip: off|lines|grid|dots
 #   pkeep notespacing MM    rule/grid spacing in millimetres (4-30)
+#   pkeep margin on|off     workbook-style left margin line
+#   pkeep marginmm MM       margin line distance from the left edge (10-80)
 #   pkeep art on|off        rotating CMYK ASCII art in the top-right corner
 #   pkeep artsheet          print a gallery of all 15 art pieces
 #   pkeep update            fetch + verify + install the latest version
@@ -43,6 +45,8 @@ NONOTIFY_FLAG="$SCRIPTS/printer_keepalive.nonotify"
 LINES_FLAG="$SCRIPTS/printer_keepalive.lines"
 NOTESTYLE_FILE="$SCRIPTS/printer_keepalive.notestyle"
 NOTESPACING_FILE="$SCRIPTS/printer_keepalive.notespacing"
+MARGIN_FLAG="$SCRIPTS/printer_keepalive.margin"
+MARGINMM_FILE="$SCRIPTS/printer_keepalive.marginmm"
 ARTFLAG="$SCRIPTS/printer_keepalive.art"
 LASTPRINT_FILE="$SCRIPTS/printer_keepalive.lastprint"
 HISTORY_FILE="$SCRIPTS/printer_keepalive.history"
@@ -56,7 +60,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.8.0"
+VERSION="1.9.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -99,7 +103,10 @@ art_on()     { [ -e "$ARTFLAG" ]; }
 set_notestyle()   { case "$1" in off|lines|grid|dots) printf '%s\n' "$1" > "$NOTESTYLE_FILE"; rm -f "$LINES_FLAG";; *) return 1;; esac; }
 cycle_notestyle() { case "$(get_notestyle)" in off) set_notestyle lines;; lines) set_notestyle grid;; grid) set_notestyle dots;; *) set_notestyle off;; esac; }
 set_notespacing() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -lt 4 ] && return 1; [ "$1" -gt 30 ] && return 1; printf '%s\n' "$1" > "$NOTESPACING_FILE"; }
-notepaper_summary() { local s; s=$(get_notestyle); [ "$s" = off ] && echo "off" || echo "$s · $(get_notespacing)mm"; }
+margin_on()      { [ -e "$MARGIN_FLAG" ]; }
+get_marginmm()   { local v=""; [ -r "$MARGINMM_FILE" ] && v=$(trim < "$MARGINMM_FILE"); case "$v" in ''|*[!0-9]*) echo 25;; *) echo "$v";; esac; }
+set_marginmm()   { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -lt 10 ] && return 1; [ "$1" -gt 80 ] && return 1; printf '%s\n' "$1" > "$MARGINMM_FILE"; }
+notepaper_summary() { local s; s=$(get_notestyle); [ "$s" = off ] && echo "off" || echo "$s · $(get_notespacing)mm$(margin_on && echo " · margin $(get_marginmm)mm")"; }
 # what the spacing means for the current style (grid = maths squares)
 spacing_label() { case "$(get_notestyle)" in grid) echo "Square size";; dots) echo "Dot spacing";; *) echo "Line spacing";; esac; }
 # --- printer selection (multiple allowed) ----------------------------------
@@ -304,10 +311,12 @@ _draw_body() {
         printf '  %s\n' "$CSEP"
         row 0 "Style              $(get_notestyle)"
         row 1 "$(printf '%-18s' "$(spacing_label)")$(get_notespacing) mm"
+        row 2 "Left margin line   $(margin_on && echo ON || echo OFF)"
+        row 3 "Margin distance    $(get_marginmm) mm"
         printf '  %s\n' "$SEP"
-        row 2 "← Back to settings"
+        row 4 "← Back to settings"
         printf '  %s\n' "$SEP"
-        printf '  %s\n' "${DIM}off · lines · grid (maths squares) · dots. Fills the page below the strip.${R}"
+        printf '  %s\n' "${DIM}off · lines · grid (maths squares) · dots. Margin = workbook line near the left.${R}"
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter change · esc back · q quit${R}"
     elif [ "$SCREEN" = printers ]; then
@@ -433,7 +442,7 @@ ui() {
         case "$SCREEN" in
             settings)  max=$SET_MAX;;
             printers)  max=${#AVAIL[@]};;   # 0..N-1 printers, N = "Done"
-            notepaper) max=2;;
+            notepaper) max=4;;
             *)         max=$MAIN_MAX;;
         esac
         case "$key" in
@@ -446,7 +455,9 @@ ui() {
                     case "$focus" in
                         0) cycle_notestyle; MSG="Style: $(get_notestyle)";;
                         1) local sp; sp=$(prompt_line "$(spacing_label) in mm (4-30, now $(get_notespacing)): "); set_notespacing "$sp" && MSG="$(spacing_label) set to ${sp}mm" || MSG="Unchanged (4-30 only)";;
-                        2) SCREEN=settings; focus=4; MSG="";;
+                        2) if margin_on; then rm -f "$MARGIN_FLAG"; MSG="Left margin line OFF"; else touch "$MARGIN_FLAG"; MSG="Left margin line ON"; fi;;
+                        3) local mm; mm=$(prompt_line "Margin distance from left in mm (10-80, now $(get_marginmm)): "); set_marginmm "$mm" && MSG="Margin distance set to ${mm}mm" || MSG="Unchanged (10-80 only)";;
+                        4) SCREEN=settings; focus=4; MSG="";;
                     esac
                 elif [ "$SCREEN" = printers ]; then
                     if [ "$focus" -ge "${#AVAIL[@]}" ]; then SCREEN=settings; focus=1; MSG="$(sel_count) printer(s) selected"
@@ -547,6 +558,8 @@ case "${1:-}" in
     lines)     case "${2:-}" in on) set_notestyle lines; echo "Note paper: lines";; off) set_notestyle off; echo "Note paper: off";; *) lines_on && echo on || echo off;; esac;;
     notepaper) if [ -n "${2:-}" ]; then set_notestyle "$2" && echo "Note paper: $2" || echo "Invalid (off|lines|grid|dots)"; else get_notestyle; fi;;
     notespacing) if [ -n "${2:-}" ]; then set_notespacing "$2" && echo "Spacing set to ${2}mm" || echo "Invalid (4-30 mm)"; else echo "$(get_notespacing)mm"; fi;;
+    margin)    case "${2:-}" in on) touch "$MARGIN_FLAG"; echo "Left margin line ON";; off) rm -f "$MARGIN_FLAG"; echo "Left margin line OFF";; *) margin_on && echo on || echo off;; esac;;
+    marginmm)  if [ -n "${2:-}" ]; then set_marginmm "$2" && echo "Margin distance set to ${2}mm" || echo "Invalid (10-80 mm)"; else echo "$(get_marginmm)mm"; fi;;
     art)       case "${2:-}" in on) touch "$ARTFLAG"; echo "ASCII art ON";; off) rm -f "$ARTFLAG"; echo "ASCII art OFF";; *) art_on && echo on || echo off;; esac;;
     artsheet)  "$WORKER" --art-sheet;;
     help|-h|--help) show_help;;
