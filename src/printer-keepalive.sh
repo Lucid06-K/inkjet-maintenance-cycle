@@ -150,8 +150,9 @@ IPPEOF
         [ -r "$cf" ] && cat "$cf" || echo ""
         return 0
     fi
-    # map levels onto the 4 channels "C M Y K". Separate cartridges map directly;
-    # a single combined colour cartridge fills C/M/Y; "-" where unknown.
+    # classify cartridges. Output is one of:
+    #   "combined <colour%> <k%>"     one tri-colour cartridge + black
+    #   "separate <c> <m> <y> <k>"    individual cartridges ("-" = unknown)
     mapped=$(awk -v n="$names" -v l="$levels" -v t="$types" 'BEGIN{
         ni=split(n,N,","); split(l,L,","); split(t,T,",");
         color=""; c=""; m=""; y=""; k="";
@@ -164,8 +165,13 @@ IPPEOF
             else if(nm ~ /yellow|^y$/)          y=lv;
             else                                color=lv;   # combined "Color"/tri-colour
         }
-        if(c=="") c=color; if(m=="") m=color; if(y=="") y=color;
-        printf "%s %s %s %s", (c==""?"-":c),(m==""?"-":m),(y==""?"-":y),(k==""?"-":k);
+        sep = (c != "" || m != "" || y != "");
+        if (color != "" && !sep) {                       # one tri-colour cartridge
+            printf "combined %s %s", color, (k==""?"-":k);
+        } else {
+            if(c=="") c=color; if(m=="") m=color; if(y=="") y=color;
+            printf "separate %s %s %s %s", (c==""?"-":c),(m==""?"-":m),(y==""?"-":y),(k==""?"-":k);
+        }
     }')
     printf '%s\n' "$mapped" > "$cf" 2>/dev/null   # cache the fresh reading
     printf '%s\n' "$mapped"
@@ -232,8 +238,9 @@ ops.append(text(ML, 802, 13, 0.82, "PRINTER DON'T DIE PLEASE!!", font="F2", tc=1
 sub = subtitle.strip()
 sub = (sub + "  -  " if sub else "") + f"{tier} flush"
 ops.append(text(ML, 788, 8, 0.45, sub))
-# ink levels (per channel "C M Y K") are drawn on the divider below.
-ink_levels = ink.split() if ink else []
+# ink: "combined <colour> <k>" or "separate <c> <m> <y> <k>" — drawn on the divider.
+ink_tok = ink.split() if ink else []
+ink_mode = ink_tok[0] if ink_tok else ""
 
 # colour strip across the short side, just below the header
 y = 768
@@ -245,15 +252,33 @@ for c, m, ye, k, label in inks:
     y = strip_bottom - GAP
 
 # divider between the test strip and the space below: one rule split into four
-# equal C/M/Y/K quarters, doubling as the ink gauge — each channel's % is printed
-# above its quarter (same value across C/M/Y for a combined colour cartridge).
+# equal C/M/Y/K quarters, doubling as the ink gauge. The level(s) print above it —
+# a single "Colour" reading spanning C/M/Y for a combined tri-colour cartridge,
+# otherwise one reading per channel.
 rule_y = strip_bottom - 16
 qw = CW / 4.0
 for i, (c, m, ye, k) in enumerate([(1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0,1)]):
     ops.append(line(ML + i*qw, rule_y, ML + (i+1)*qw, rule_y, 1.5, c, m, ye, k))
-    if i < len(ink_levels) and ink_levels[i] not in ("", "-"):
-        ops.append(ctext(ML + (i + 0.5) * qw, rule_y + 4, 6.5, 0.55, ink_levels[i] + "%"))
-if ink_levels:
+
+def gauge(xc, lvl, lbl=""):
+    if lvl in ("", "-"): return
+    ops.append(ctext(xc, rule_y + 4, 7, 0.6, (lbl + " " if lbl else "") + lvl + "%"))
+
+if ink_mode == "combined":
+    # one label centred over the C/M/Y span (first three quarters), one over K.
+    gauge(ML + 1.5 * qw, ink_tok[1] if len(ink_tok) > 1 else "-", "Colour")
+    gauge(ML + 3.5 * qw, ink_tok[2] if len(ink_tok) > 2 else "-", "Black")
+    # a thin brace under the C/M/Y quarters to show they share one cartridge
+    by = rule_y - 5
+    ops.append(line(ML + 4, by, ML + 3 * qw - 4, by, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(ML + 4, by, ML + 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+    ops.append(line(ML + 3 * qw - 4, by, ML + 3 * qw - 4, rule_y - 2, 0.5, 0, 0, 0, 0.30))
+elif ink_mode == "separate":
+    vals = ink_tok[1:5]
+    for i, v in enumerate(vals):
+        gauge(ML + (i + 0.5) * qw, v)
+
+if ink_mode in ("combined", "separate"):
     ops.append(text(RIGHT + 6, rule_y - 2, 6, 0.45, "ink"))
 
 # note paper below (optional): lines / grid / dots, edge to edge, down to the
