@@ -60,7 +60,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.9.0"
+VERSION="1.10.0"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -82,7 +82,7 @@ Lj8KV3AbURsbzg/soOTa+Qqw8xK7+wPu7Ucj0DI9SuX5AgMBAAE=
 
 R=$'\033[0m'; REV=$'\033[7m'; DIM=$'\033[2m'; GRN=$'\033[32m'; BLD=$'\033[1m'
 # CMYK-themed accents (on-brand for the colour strip the tool prints)
-CYN=$'\033[36m'; MAG=$'\033[35m'; YEL=$'\033[33m'; REDC=$'\033[31m'
+CYN=$'\033[36m'; MAG=$'\033[35m'; YEL=$'\033[33m'; REDC=$'\033[31m'; BLU=$'\033[34m'
 # title with each word tinted like the C/M/Y/K strip
 TITLE="${BLD}${CYN}Printer ${MAG}Don't ${YEL}Die ${GRN}Please!!${R}"
 
@@ -293,10 +293,10 @@ _paint() {
 }
 draw() { _paint "$(_draw_body)"; }
 
-row() {  # row <index> <plain-when-unfocused> ; focused row is reverse-video
-    local i="$1" text="$2"
-    if [ "$i" -eq "$focus" ]; then printf '  %s ▸ %-44s%s\n' "$REV" "$text" "$R"
-    else printf '     %s\n' "$text"; fi
+row() {  # row <index> <text> [colour] ; focused row = colour-tinted reverse bar
+    local i="$1" text="$2" col="${3:-}"
+    if [ "$i" -eq "$focus" ]; then printf '  %s%s ▸ %-44s%s\n' "$col" "$REV" "$text" "$R"
+    else printf '     %s%s%s\n' "$col" "$text" "$R"; fi
 }
 
 _draw_body() {
@@ -365,17 +365,19 @@ _draw_body() {
         printf '   Next (est)   %s%s%s\n' "$DIM" "$(next_phrase)" "$R"
         printf '   Notifications %s\n' "$(notify_on && echo "${GRN}on${R}" || echo "${DIM}off${R}")"
         printf '  %s\n' "$SEP"
-        row 0 "$(is_loaded && echo 'Disable scheduled keep-alive' || echo 'Enable scheduled keep-alive')"
+        # colour-coded by category: green=power, cyan=print, magenta=deep flush,
+        # yellow=settings, blue=info, red=quit
+        row 0 "$(is_loaded && echo 'Disable scheduled keep-alive' || echo 'Enable scheduled keep-alive')" "$GRN"
         printf '  %s\n' "$SEP"
-        row 1 "Print keep-alive now   ${DIM}(auto: $(auto_tier))${R}"
-        row 2 "Intensive flush now    ${DIM}(heavy, 2 pages)${R}"
-        row 3 "Preview (dry run)"
-        row 4 "History / log"
-        row 5 "Settings ▸"
-        row 6 "Help"
-        row 7 "Check for updates"
+        row 1 "Print keep-alive now   (auto: $(auto_tier))" "$CYN"
+        row 2 "Intensive flush now    (heavy, 2 pages)"     "$MAG"
+        row 3 "Preview (dry run)"                           "$CYN"
+        row 4 "History / log"                               "$BLU"
+        row 5 "Settings ▸"                                  "$YEL"
+        row 6 "Help"                                        "$BLU"
+        row 7 "Check for updates"                           "$BLU"
         printf '  %s\n' "$SEP"
-        row 8 "Quit"
+        row 8 "Quit"                                        "$REDC"
         printf '  %s\n' "$SEP"
         printf '  %s\n' "${GRN}${MSG}${R}"
         printf '\n  %s\n' "${DIM}↑/↓ move · enter select · q quit${R}"
