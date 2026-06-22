@@ -61,7 +61,7 @@ REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.14.0"
+VERSION="1.14.1"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -456,7 +456,7 @@ show_history() {
         done
     fi
     printf '\n  %srecent log:%s\n' "$DIM" "$R"
-    [ -s "$LOG" ] && tail -n 6 "$LOG" | sed 's/^/  /' || echo "  (log empty)"
+    if [ -s "$LOG" ]; then tail -n 6 "$LOG" | sed 's/^/  /'; else echo "  (log empty)"; fi
 }
 
 # last cached ink reading for the first selected printer ("combined …" / "separate …")
@@ -482,12 +482,11 @@ render_to_png() {
 
 # a scaled ASCII mock-up of the printed page, reflecting the current settings.
 preview_page() {
-    local W=48 pad="   " style tier ink mode c m y k dash blank i yy
+    local W=48 pad="   " style tier ink mode c m y k dash blank i yy; local -a it
     style=$(get_notestyle); tier=$(auto_tier); ink=$(ink_cached)
-    # shellcheck disable=SC2086
-    set -- $ink; mode="${1:-}"
-    if [ "$mode" = combined ]; then c="${2:-?}"; m="$c"; y="$c"; k="${3:-?}"
-    elif [ "$mode" = separate ]; then c="${2:-?}"; m="${3:-?}"; y="${4:-?}"; k="${5:-?}"
+    read -ra it <<< "$ink"; mode="${it[0]:-}"     # glob-safe split (no set -- )
+    if [ "$mode" = combined ]; then c="${it[1]:-?}"; m="$c"; y="$c"; k="${it[2]:-?}"
+    elif [ "$mode" = separate ]; then c="${it[1]:-?}"; m="${it[2]:-?}"; y="${it[3]:-?}"; k="${it[4]:-?}"
     else c="?"; m="?"; y="?"; k="?"; fi
     dash=$(printf '%*s' "$W" '' | tr ' ' '-')
     blank=$(printf '%*s' "$W" '')
@@ -671,7 +670,7 @@ case "${1:-}" in
     off)       agent_off; echo "Scheduled keep-alive disabled.";;
     run)       "$WORKER" ${2:+--tier "$2"};;
     preview)   "$WORKER" --dry ${2:+"$2"};;
-    render)    o=$(render_to_png); rc=$?; [ "$rc" -eq 0 ] && echo "Rendered: $o" || { [ "$rc" -eq 2 ] && echo "Opened PDF (sips unavailable)" || echo "Render failed"; };;
+    render)    o=$(render_to_png); rc=$?; case "$rc" in 0) echo "Rendered: $o";; 2) echo "Opened PDF (sips unavailable)";; *) echo "Render failed";; esac;;
     log)       n="${2:-15}"; [ -s "$HISTORY_FILE" ] && tail -n "$n" "$HISTORY_FILE" | awk -F'\t' '{g=($4<0?"first":"gap "$4"d"); printf "%s  %-7s %-8s x%s  %s\n",$2,$3,g,$5,$6}' || echo "(no history yet)";;
     notify)    case "${2:-}" in on) rm -f "$NONOTIFY_FLAG"; echo "Notifications ON";; off) touch "$NONOTIFY_FLAG"; echo "Notifications OFF";; *) notify_on && echo on || echo off;; esac;;
     printer|printers)
