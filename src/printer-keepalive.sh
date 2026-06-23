@@ -366,44 +366,20 @@ else:
     # redesign: half-width strip on the right (frees the left half for the header)
     strip_left = W / 2.0
     strip_w = RIGHT - strip_left
-    sx, qw = strip_left, strip_w / 4.0
-    # 1) bar positions (drawn later, so the ink-level connectors can sit BEHIND them)
     y = 800
     strip_bottom = y
     bar_span = {}
-    barlist = []
-    for c, m, ye, k, label in inks:
+    for i, (c, m, ye, k, label) in enumerate(inks):
+        ops.append(rect(strip_left, y - BH, strip_w, BH, c, m, ye, k))
+        ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, barlabel(i, label)))
         bar_span[label] = (y, y - BH)
-        barlist.append((c, m, ye, k, label, y - BH))
         strip_bottom = y - BH
         y = strip_bottom - GAP
+    sx, qw = strip_left, strip_w / 4.0
     rule_y = strip_bottom - 16
-    # 2) ink-level connectors BEHIND the bars: each quarter's colour rises from the
-    # divider up to the BOTTOM of its own bar, tapering from the level width (at the
-    # divider) to the full quarter (at the bar). The bars, drawn next, cover the
-    # crossings, so each colour shows only in the gaps + the gauge band.
-    for i, lab in enumerate(("C", "M", "Y", "K")):
-        lv = qlevels[i]
-        if lv is None: continue
-        c, m, ye, k = QCOL[i]
-        qx = sx + i * qw
-        bar_bot = bar_span[lab][1]
-        fillw = max(3.0, lv / 100.0 * (qw - 2))
-        bl = qx + (qw - fillw) / 2.0; br = bl + fillw     # narrow (level) end, at the divider
-        tl, tr = qx + 1, qx + qw - 1                       # full quarter, where it meets the bar
-        my = (rule_y + bar_bot) / 2.0
-        ops.append(f"{c} {m} {ye} {k} k "
-                   f"{bl:.1f} {rule_y:.1f} m "
-                   f"{bl:.1f} {my:.1f} {tl:.1f} {my:.1f} {tl:.1f} {bar_bot:.1f} c "
-                   f"{tr:.1f} {bar_bot:.1f} l "
-                   f"{tr:.1f} {my:.1f} {br:.1f} {my:.1f} {br:.1f} {rule_y:.1f} c f")
-    # 3) the bars, on top of the connectors
-    for i, (c, m, ye, k, label, bot) in enumerate(barlist):
-        ops.append(rect(strip_left, bot, strip_w, BH, c, m, ye, k))
-        ops.append(text(RIGHT + 6, bot + (BH - 6) / 2, 6.5, 0.45, barlabel(i, label)))
 
-# divider: one rule split into four C/M/Y/K quarters; the ink-level connectors feed
-# into it. Per-channel percentages are shown beside the C/M/Y/K bar labels instead.
+# divider below the strip: one rule split into four C/M/Y/K quarters. Ink levels are
+# shown as a percentage beside each C/M/Y/K bar label (no gauge fill on the divider).
 for i, (c, m, ye, k) in enumerate(QCOL):
     ops.append(line(sx + i * qw, rule_y, sx + (i + 1) * qw, rule_y, 1.5, c, m, ye, k))
 
