@@ -390,7 +390,9 @@ if layout != "classic":
     def part(i): return sp[i] if i < len(sp) and sp[i] else ""
     line1 = "  ·  ".join([s for s in (part(0), f"{tier} flush", part(1)) if s])  # date · flush · last-run
     host_s = part(2)                                                            # computer name
-    TX = ML + 32                   # info text starts to the right of the art column
+    # info lines align with the title start; indent only when art is shown, so the
+    # art has its own column to the left and never overlaps the text
+    TX = (ML + 32) if (0 <= art_idx < len(ART)) else ML
     def fit(s, size, x0):          # truncate so a line never runs into the strip
         n = int((strip_left - 6 - x0) / (size * 0.5))
         return s if len(s) <= n else s[:max(0, n - 1)]
