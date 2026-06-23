@@ -59,11 +59,11 @@ AUTOUPDATE_FLAG="$SCRIPTS/printer_keepalive.autoupdate"
 UPDATE_STAMP="$SCRIPTS/.printer_keepalive.update_check"
 WORKER_DEST="$SCRIPTS/printer-keepalive.sh"   # where the worker is installed
 SELF_DEST="$SCRIPTS/pkeep"                     # where this control script is installed
-REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/printer-keepalive/main"
+REPO_RAW="https://raw.githubusercontent.com/Lucid06-K/inkjet-maintenance-cycle/main"
 
 DEFAULT_INTERVAL=1209600
 DEFAULT_LEAD=8
-VERSION="1.17.4"
+VERSION="1.17.5"
 
 # Public key for verifying the update manifest's signature. The matching private
 # key is held OFFLINE by the maintainer (see SIGNING.md) and is never in the repo.
@@ -242,7 +242,7 @@ run_update() {
     command -v curl    >/dev/null 2>&1 || { echo "curl is required for updates."; return 1; }
     command -v openssl >/dev/null 2>&1 || { echo "openssl is required to verify updates."; return 1; }
     local tmp newver instver
-    echo "Checking github.com/Lucid06-K/printer-keepalive …"
+    echo "Checking github.com/Lucid06-K/inkjet-maintenance-cycle …"
     newver=$($CURL_SAFE "$REPO_RAW/VERSION" 2>/dev/null | tr -dc '0-9.')
     [ -n "$newver" ] || { echo "Couldn't reach the update server (check your connection)."; return 1; }
     echo "  installed: v$VERSION    latest: v$newver"

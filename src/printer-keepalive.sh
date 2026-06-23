@@ -318,7 +318,7 @@ def art_block(lines, x_left, y_top, size, lead):
 ops = []
 ink_tok = ink.split() if ink else []
 ink_mode = ink_tok[0] if ink_tok else ""
-REPO = "github.com/Lucid06-K/printer-keepalive"
+REPO = "github.com/Lucid06-K/inkjet-maintenance-cycle"
 note_split_x = None                # x where left/right note regions differ (heavy redesign)
 notes_left_top = None              # y where the extra left-fill note region starts
 QCOL = [(1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0,1)]

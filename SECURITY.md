@@ -25,7 +25,7 @@ Report privately through GitHub's **Private vulnerability reporting**:
 
 > Repo **Security** tab → **Report a vulnerability** → fill in the advisory form.
 
-(Direct link: `https://github.com/Lucid06-K/printer-keepalive/security/advisories/new`)
+(Direct link: `https://github.com/Lucid06-K/inkjet-maintenance-cycle/security/advisories/new`)
 
 Please include:
 
