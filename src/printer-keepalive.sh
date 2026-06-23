@@ -335,10 +335,14 @@ elif ink_mode == "separate":
     qlevels = [numlvl(x) for x in (list(ink_tok[1:5]) + [None] * 4)[:4]]
 else:
     qlevels = [None] * 4
-# strip label with the channel's ink % to its right (e.g. "C  75%"); plain when unknown
-def barlabel(i, lab):
+# strip label: the C/M/Y/K letter, with the channel's ink % drawn at a FIXED x to its
+# right so the percentages line up in a column (letter widths differ, so one combined
+# string wouldn't align). Percentage omitted when the level is unknown.
+def draw_barlabel(yc, i, lab):
+    ops.append(text(RIGHT + 6, yc, 6.5, 0.45, lab))
     lv = qlevels[i]
-    return f"{lab}  {int(round(lv))}%" if lv is not None else lab
+    if lv is not None:
+        ops.append(text(RIGHT + 15, yc, 6.5, 0.45, f"{int(round(lv))}%"))
 
 # ===== top band: strip + ink-gauge divider (layout-dependent) =====
 if layout == "classic":
@@ -356,7 +360,7 @@ if layout == "classic":
     bar_span = {}
     for i, (c, m, ye, k, label) in enumerate(inks):
         ops.append(rect(ML, y - BH, CW, BH, c, m, ye, k))
-        ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, barlabel(i, label)))
+        draw_barlabel(y - BH + (BH - 6) / 2, i, label)
         bar_span[label] = (y, y - BH)
         strip_bottom = y - BH
         y = strip_bottom - GAP
@@ -371,7 +375,7 @@ else:
     bar_span = {}
     for i, (c, m, ye, k, label) in enumerate(inks):
         ops.append(rect(strip_left, y - BH, strip_w, BH, c, m, ye, k))
-        ops.append(text(RIGHT + 6, y - BH + (BH - 6) / 2, 6.5, 0.45, barlabel(i, label)))
+        draw_barlabel(y - BH + (BH - 6) / 2, i, label)
         bar_span[label] = (y, y - BH)
         strip_bottom = y - BH
         y = strip_bottom - GAP
